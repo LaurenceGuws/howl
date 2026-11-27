@@ -2030,39 +2030,27 @@ pub const Plane = struct {
         return self.content_generation;
     }
 
-    /// Advances running Kitty animations against caller monotonic milliseconds.
-    pub fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
-        const virtual_visible: [max_images]bool = @splat(false);
-        return self.advanceAnimationsWithVisibility(now_ms, &virtual_visible);
+    /// Reports whether a bank has any running image animation.
+    pub fn hasRunningAnimations(self: *const Plane, bank: Bank) bool {
+        for (self.images[0..self.image_count]) |image_value|
+            if (image_value.bank == bank and image_value.animation != .stopped) return true;
+        return false;
     }
 
-    /// Advances animations while accepting caller-projected virtual visibility.
-    ///
-    /// `virtual_visible` is dense-image-indexed. Graphics still owns frame
-    /// selection and ordinary placement visibility; Terminal supplies only the
-    /// read-only U+10EEEE projection fact that the plane cannot derive from
-    /// screen cells itself.
-    pub fn advanceAnimationsWithVisibility(
+    /// Advances animations against caller monotonic milliseconds and the
+    /// canonical live viewport's dense-image-indexed visibility witness.
+    /// The witness is borrowed synchronously; frame state remains ours.
+    pub fn advanceAnimations(
         self: *Plane,
         now_ms: u64,
-        virtual_visible: *const [max_images]bool,
+        visible: *const [max_images]bool,
     ) AnimationTick {
         var changed = false;
         var semantic_changed = false;
         var next_ms: ?u32 = null;
-        var running = false;
-        for (self.images[0..self.image_count]) |image_value| {
-            if (image_value.animation != .stopped) {
-                running = true;
-                break;
-            }
-        }
-        if (!running) return .{ .changed = false, .semantic_changed = false, .next_ms = null };
-        const independent_visible = self.independentPhysicalVisibility();
         for (self.images[0..self.image_count], 0..) |*image_value, image_index| {
-            const visible = independent_visible[image_index] or virtual_visible[image_index];
-            if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0 or
-                !visible or self.animationDuration(image_value.*) == 0)
+            if (!visible[image_index] or image_value.animation == .stopped or
+                self.frameCount(image_value.id) == 0 or self.animationDuration(image_value.*) == 0)
                 continue;
             if (image_value.frame_started_ms == null) image_value.frame_started_ms = now_ms;
             const gap = self.currentGap(image_value.*);
@@ -2743,54 +2731,6 @@ pub const Plane = struct {
     fn hasPlacement(self: *const Plane, image_id: u32) bool {
         for (self.placements[0..self.placement_count]) |value|
             if (value.image_id == image_id) return true;
-        return false;
-    }
-
-    /// One bounded scan produces physical visibility for all image identities.
-    /// A child of a virtual prototype is not independently visible, even if
-    /// its placement has a physical pixel resource.
-    fn independentPhysicalVisibility(self: *const Plane) [max_images]bool {
-        var visible: [max_images]bool = @splat(false);
-        for (self.placements[0..self.placement_count], 0..) |value, index| {
-            if (value.virtual) continue;
-            const root = self.placementRoot(index) orelse continue;
-            if (root.virtual_index != null) continue;
-            for (self.images[0..self.image_count], 0..) |image_value, image_index| {
-                if (image_value.id != value.image_id) continue;
-                visible[image_index] = true;
-                break;
-            }
-        }
-        return visible;
-    }
-
-    /// Reports whether one running image needs caller-projected virtual visibility.
-    pub fn needsVirtualAnimationVisibility(self: *const Plane, bank: Bank) bool {
-        var running = false;
-        for (self.images[0..self.image_count]) |image_value| {
-            if (image_value.animation != .stopped) {
-                running = true;
-                break;
-            }
-        }
-        if (!running) return false;
-        const independent_visible = self.independentPhysicalVisibility();
-        for (self.placements[0..self.placement_count], 0..) |placement_value, index| {
-            if (placement_value.bank != bank) continue;
-            const virtual_dependent = placement_value.virtual or blk: {
-                const root = self.placementRoot(index) orelse break :blk false;
-                break :blk root.virtual_index != null;
-            };
-            if (!virtual_dependent) continue;
-            for (self.images[0..self.image_count], 0..) |image_value, image_index| {
-                if (image_value.id != placement_value.image_id) continue;
-                if (independent_visible[image_index]) break;
-                if (image_value.animation != .stopped and self.frameCount(image_value.id) != 0 and
-                    self.animationDuration(image_value) != 0)
-                    return true;
-                break;
-            }
-        }
         return false;
     }
 
@@ -4795,6 +4735,7 @@ test "Kitty z and point3d deletion preserve unmatched layers and image data" {
 test "Kitty frames compose transactionally and advance on monotonic gaps" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
+    const visible: [max_images]bool = .{true} ++ @as([max_images - 1]bool, @splat(false));
     try std.testing.expect((try plane.command(
         "a=T,f=32,s=1,v=1,i=20;/wAA/w==",
         .primary,
@@ -4844,7 +4785,7 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
     try std.testing.expectEqual(@as(u16, 0), plane.images[0].current_frame);
     try std.testing.expectEqual(generation_before_invalid_control, plane.generation());
 
-    const started = plane.advanceAnimations(100);
+    const started = plane.advanceAnimations(100, &visible);
     try std.testing.expect(!started.changed);
     try std.testing.expectEqual(@as(?u32, null), started.next_ms);
     try std.testing.expect((try plane.command(
@@ -4856,11 +4797,11 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
         1,
         1,
     )).changed);
-    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100).next_ms);
-    const second = plane.advanceAnimations(140);
+    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100, &visible).next_ms);
+    const second = plane.advanceAnimations(140, &visible);
     try std.testing.expect(second.changed);
     try std.testing.expectEqualSlices(u8, &.{ 127, 0, 128, 255 }, plane.image(0).?.pixels);
-    const root = plane.advanceAnimations(190);
+    const root = plane.advanceAnimations(190, &visible);
     try std.testing.expect(root.changed);
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
 
@@ -5267,9 +5208,10 @@ test "Kitty frame deletion defaults to root and uppercase retires frame-less ima
     try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
 }
 
-test "Kitty animation requires a placement and nonzero total duration" {
+test "Kitty animation requires caller visibility and nonzero total duration" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
+    var visible: [max_images]bool = .{false} ++ @as([max_images - 1]bool, @splat(false));
     try std.testing.expect((try plane.command(
         "a=t,f=32,s=1,v=1,i=41,q=2;AQIDBA==",
         .primary,
@@ -5289,13 +5231,16 @@ test "Kitty animation requires a placement and nonzero total duration" {
         1,
     )).changed);
     try std.testing.expect((try plane.command("a=a,i=41,s=3,r=1,z=40,q=2", .primary, 0, 0, 0, 1, 1)).changed);
-    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(100).next_ms);
+    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(100, &visible).next_ms);
     try std.testing.expect((try plane.command("a=p,i=41,q=2", .primary, 0, 0, 0, 1, 1)).changed);
-    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100).next_ms);
+    visible[0] = true;
+    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100, &visible).next_ms);
     try std.testing.expect((try plane.command("a=d,d=a", .primary, 0, 0, 0, 1, 1)).changed);
-    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(1000).next_ms);
+    visible[0] = false;
+    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(1000, &visible).next_ms);
     try std.testing.expect((try plane.command("a=p,i=41,q=2", .primary, 0, 0, 0, 1, 1)).changed);
-    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(1000).next_ms);
+    visible[0] = true;
+    try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(1000, &visible).next_ms);
     try std.testing.expect((try plane.command(
         "a=a,i=41,r=1,z=-1,q=2",
         .primary,
@@ -5305,12 +5250,13 @@ test "Kitty animation requires a placement and nonzero total duration" {
         1,
         1,
     )).changed);
-    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(200).next_ms);
+    try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(200, &visible).next_ms);
 }
 
 test "Kitty root frame is gapless until its gap is explicitly configured" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
+    const visible: [max_images]bool = .{true} ++ @as([max_images - 1]bool, @splat(false));
     try std.testing.expect((try plane.command(
         "a=T,f=32,s=1,v=1,i=42,C=1,q=2;/wAA/w==",
         .primary,
@@ -5331,7 +5277,7 @@ test "Kitty root frame is gapless until its gap is explicitly configured" {
     )).changed);
     try std.testing.expectEqual(@as(u32, 0), plane.images[0].root_gap_ms);
     try std.testing.expect((try plane.command("a=a,i=42,s=3,q=2", .primary, 0, 0, 0, 1, 1)).changed);
-    const first = plane.advanceAnimations(100);
+    const first = plane.advanceAnimations(100, &visible);
     try std.testing.expect(first.changed);
     try std.testing.expectEqual(@as(?u32, 50), first.next_ms);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, plane.image(0).?.pixels);

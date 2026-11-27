@@ -10433,6 +10433,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty offscreen physical placement cannot mask a visible virtual animation
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: terminal services Kitty animation through visible Unicode placeholders
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
@@ -10475,6 +10481,15 @@ specifications:
             deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
             FULL promotion
           baseline: 4ad5135a5eade890744572600b56fffe6072e770
+        howl_qualification_20261127_kitty_graphics_11:
+          scope: Animation service consumes the existing actual projected placeholder visibility rather than existence of retained
+            prototype. Offscreen physical child cannot authorize ticks; visible text for its own prototype does. Existing text
+            erase and elapsed reappearance proof retained.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1105-1152, graphics.c visible-ref layer update1637-1716, animation controls2269-2292 and image_is_animatable/scan_active_animations2295-2334,
+            child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
+            live viewport policy, no blanket FULL promotion
+          baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
     - id: relative
       section: Relative placements
       level: defined
@@ -10515,6 +10530,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty offscreen physical placement cannot mask a visible virtual animation
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: virtual parent image animation wakes only while matching text exposes the child
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
@@ -10558,6 +10579,15 @@ specifications:
             deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
             FULL promotion
           baseline: 4ad5135a5eade890744572600b56fffe6072e770
+        howl_qualification_20261127_kitty_graphics_11:
+          scope: Relative placement visibility follows existing clipped canonical projection, not parent or resource retention.
+            Selected virtual-parent child outside viewport remains ineligible; matching visible placeholder makes its image eligible.
+            No changes to relative placement geometry or ancestry lifetime.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1105-1152, graphics.c visible-ref layer update1637-1716, animation controls2269-2292 and image_is_animatable/scan_active_animations2295-2334,
+            child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
+            live viewport policy, no blanket FULL promotion
+          baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
     - id: delete
       section: Deleting images
       level: defined
@@ -10802,6 +10832,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty animation requires caller visibility and nonzero total duration
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty root frame is gapless until its gap is explicitly configured
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: First animation-frame header initializes owned metadata and calls same append path directly; no synthetic
@@ -10849,6 +10885,14 @@ specifications:
             deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
             FULL promotion
           baseline: 4ad5135a5eade890744572600b56fffe6072e770
+        howl_qualification_20261127_kitty_graphics_11:
+          scope: Frame service consumes an ephemeral caller-supplied visibility witness and preserves existing bounded duration
+            and gapless-root behavior. No hidden-clock advancement or new frame storage/decoding semantics.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1105-1152, graphics.c visible-ref layer update1637-1716, animation controls2269-2292 and image_is_animatable/scan_active_animations2295-2334,
+            child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
+            live viewport policy, no blanket FULL promotion
+          baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -10862,6 +10906,27 @@ specifications:
         - kitty.graphics.animate
       - file: howl-vt/src/graphics.zig
         test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty animation service excludes inactive screen bank and keeps elapsed resume semantics
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty live animation visibility retains clipped history tails but ignores fully historical images
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty offscreen physical placement cannot mask a visible virtual animation
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty animation requires caller visibility and nonzero total duration
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty root frame is gapless until its gap is explicitly configured
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: terminal services Kitty animation through visible Unicode placeholders
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: virtual parent image animation wakes only while matching text exposes the child
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_07:
@@ -10881,6 +10946,19 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_qualification_20261127_kitty_graphics_11:
+          scope: VT animation service uses the canonical live viewport placement iterator as its sole physical, virtual and relative
+            visibility witness. Inactive bank and fully historical images do not advance or request image wake deadlines; partially
+            visible historical tail remains eligible. Re-exposure preserves the existing elapsed-time clock semantics, including
+            an immediately due frame. Explicit frame control, finite/loading behavior, duration bounds, and image ownership remain
+            unchanged. Author uses active graphics manager and is_drawn from render layers; Howl does not depend on renderer or
+            observer state. Separately selected output history viewport animation and host window visibility remain unqualified.
+            No performance claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1105-1152, graphics.c visible-ref layer update1637-1716, animation controls2269-2292 and image_is_animatable/scan_active_animations2295-2334,
+            child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
+            live viewport policy, no blanket FULL promotion
+          baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
     - id: composition
       section: Animation / Composing animation frames
       level: defined
@@ -11508,6 +11586,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty full display retirement frees frame and indexed data but preserves referenced and non-Kitty bytes
         relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty animation service excludes inactive screen bank and keeps elapsed resume semantics
+        relation: protocol-family
+      - file: howl-vt/src/terminal.zig
+        test: Kitty live animation visibility retains clipped history tails but ignores fully historical images
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Six screen retirement routes (erase, bounds, history eviction, scroll, column shift, clear bank) select
@@ -11542,6 +11626,16 @@ specifications:
             deterministic wire red-green and Plane storage/ownership proof, selected ordinary full-display lifetime only; no blanket
             FULL promotion
           baseline: 4ad5135a5eade890744572600b56fffe6072e770
+        howl_qualification_20261127_kitty_graphics_11:
+          scope: Same client ID in each screen bank has independent image animation state; only the active live bank advances.
+            An image scrolling wholly out of the live viewport remains retained but no longer requests animation wakeups, while
+            a clipped historical tail can still advance. Selecting a history observation does not change canonical animation authority.
+            Existing text blink and screen switching rules unchanged. No host-selected history or window visibility parity claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs1105-1152, graphics.c visible-ref layer update1637-1716, animation controls2269-2292 and image_is_animatable/scan_active_animations2295-2334,
+            child-monitor.c1032 active grman. Deterministic VT red-green and positive frame-clock regression proofs; canonical
+            live viewport policy, no blanket FULL promotion
+          baseline: bae8fcfc6851a9eb91d5dd4e7c6589156e246592
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty

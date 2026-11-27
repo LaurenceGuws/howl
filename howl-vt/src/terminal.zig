@@ -6698,16 +6698,13 @@ pub const Terminal = struct {
             }
         };
 
-        fn collectVirtualVisibility(
+        fn collectAnimationVisibility(
             self: *const Images,
             output: *[maximum_images]bool,
         ) void {
-            @memset(output, false);
             const plane = self.backingPlane();
-            // The shared visible-placement iterator owns both ordinary
-            // Unicode prototype projection and virtual-parent children.
-            // Reuse it rather than teaching the animation clock a second
-            // text scan or counting unanchored children as visible pixels.
+            // The same clipped iterator owns physical, virtual and relative
+            // visibility. Retention alone never authorizes a frame tick.
             var iterator = self.placementIterator();
             while (iterator.next()) |visible| {
                 for (0..plane.image_count) |image_index| {
@@ -8352,16 +8349,12 @@ pub const Terminal = struct {
     /// mutation advances canonical semantic identity; text blinking never does.
     pub fn serviceAnimations(self: *Terminal, timestamp_ns: u64) AnimationService {
         self.requireNoPreparedResize();
-        var virtual_visible: [maximum_images]bool = @splat(false);
-        const bank = graphicsBank(self);
-        if (self.graphics.needsVirtualAnimationVisibility(bank)) {
-            var observed_images = self.images(0);
-            observed_images.collectVirtualVisibility(&virtual_visible);
-        }
-        const tick = self.graphics.advanceAnimationsWithVisibility(
-            timestamp_ns / std.time.ns_per_ms,
-            &virtual_visible,
-        );
+        const tick: graphics_mod.AnimationTick = if (self.graphics.hasRunningAnimations(graphicsBank(self))) active: {
+            var visible: [maximum_images]bool = @splat(false);
+            const observed_images = self.images(0);
+            observed_images.collectAnimationVisibility(&visible);
+            break :active self.graphics.advanceAnimations(timestamp_ns / std.time.ns_per_ms, &visible);
+        } else .{ .changed = false, .semantic_changed = false, .next_ms = null };
         if (tick.semantic_changed) {
             advanceIdentity(&self.semantic_sequence);
             self.content_sequence = self.semantic_sequence;
@@ -13197,4 +13190,87 @@ fn visibilityTransaction(allocator: std.mem.Allocator) !void {
     };
     try std.testing.expect(changed);
     try std.testing.expectEqualStrings("\x1b[?999;1n\x1b[?999;2n", terminal.replyBytes());
+}
+
+test "Kitty animation service excludes inactive screen bank and keeps elapsed resume semantics" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const ms = std.time.ns_per_ms;
+    try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;AQIDBA==\x1b\\\x1b_Ga=f,i=7,r=2,z=50,C=1,q=2;BQYHCA==\x1b\\\x1b_Ga=a,i=7,s=3,r=1,z=40,q=2\x1b\\")).stateChanged());
+    try std.testing.expectEqual(@as(?u32, 40), terminal.serviceAnimations(100 * ms).next_ms);
+    const primary = terminal.images(0).image(0).?;
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).stateChanged());
+    const revision = terminal.semanticSequence();
+    const hidden = terminal.serviceAnimations(200 * ms);
+    try std.testing.expect(!hidden.changed);
+    try std.testing.expectEqual(@as(?u32, null), hidden.next_ms);
+    try std.testing.expectEqual(revision, terminal.semanticSequence());
+    try std.testing.expectEqual(primary.generation, terminal.images(0).image(0).?.generation);
+    try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;CQoLDA==\x1b\\\x1b_Ga=f,i=7,r=2,z=90,C=1,q=2;DQ4PEA==\x1b\\\x1b_Ga=a,i=7,s=3,r=1,z=70,q=2\x1b\\")).stateChanged());
+    const alternate_start = terminal.serviceAnimations(210 * ms);
+    try std.testing.expect(!alternate_start.changed);
+    try std.testing.expectEqual(@as(?u32, 70), alternate_start.next_ms);
+    try std.testing.expect(terminal.serviceAnimations(280 * ms).changed);
+    const alternate = terminal.images(0).image(1).?;
+    try std.testing.expectEqualSlices(u8, &.{ 13, 14, 15, 16 }, alternate.pixels);
+    try std.testing.expectEqual(primary.generation, terminal.images(0).image(0).?.generation);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).stateChanged());
+    const resumed = terminal.serviceAnimations(300 * ms);
+    try std.testing.expect(resumed.changed);
+    try std.testing.expectEqual(@as(?u32, 50), resumed.next_ms);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, terminal.images(0).image(0).?.pixels);
+    try std.testing.expectEqual(alternate.generation, terminal.images(0).image(1).?.generation);
+}
+
+test "Kitty live animation visibility retains clipped history tails but ignores fully historical images" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const ms = std.time.ns_per_ms;
+    try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=7,C=1,q=2,s=1,v=2;AQIDBAUGBwg=\x1b\\\x1b_Ga=f,i=7,r=2,z=50,C=1,q=2;CQoLDA0ODxA=\x1b\\\x1b_Ga=a,i=7,s=3,r=1,z=40,q=2\x1b\\")).stateChanged());
+    try std.testing.expectEqual(@as(?u32, 40), terminal.serviceAnimations(100 * ms).next_ms);
+    try std.testing.expect((try terminal.feed("\x1b[3;1H\n")).stateChanged());
+    try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+    const partial = terminal.images(0);
+    var iterator = partial.placementIterator();
+    try std.testing.expectEqual(@as(i128, -1), iterator.next().?.top);
+    try std.testing.expect(terminal.serviceAnimations(140 * ms).changed);
+    const generation = terminal.images(0).image(0).?.generation;
+    try std.testing.expect((try terminal.feed("\n")).stateChanged());
+    try std.testing.expectEqual(@as(u32, 2), terminal.semanticView(0).history_count);
+    const live = terminal.images(0);
+    iterator = live.placementIterator();
+    try std.testing.expect(iterator.next() == null);
+    const revision = terminal.semanticSequence();
+    const hidden = terminal.serviceAnimations(190 * ms);
+    try std.testing.expect(!hidden.changed);
+    try std.testing.expectEqual(@as(?u32, null), hidden.next_ms);
+    try std.testing.expectEqual(revision, terminal.semanticSequence());
+    try std.testing.expectEqual(generation, terminal.images(0).image(0).?.generation);
+    const historical = terminal.images(2);
+    iterator = historical.placementIterator();
+    try std.testing.expect(iterator.next() != null);
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b_Ga=p,i=7,C=1,q=2\x1b\\")).stateChanged());
+    const resumed = terminal.serviceAnimations(200 * ms);
+    try std.testing.expect(resumed.changed);
+    try std.testing.expectEqual(@as(?u32, 40), resumed.next_ms);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 }, terminal.images(0).image(0).?.pixels);
+}
+
+test "Kitty offscreen physical placement cannot mask a visible virtual animation" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    const ms = std.time.ns_per_ms;
+    // The parent has a virtual prototype and the child is positioned
+    // entirely outside the right viewport edge. The child also has its
+    // own virtual prototype, so its actual visible placeholder can wake it.
+    try std.testing.expect((try terminal.feed("\x1b_Ga=T,i=7,p=1,U=1,C=1,q=2,s=1,v=1;AQIDBA==\x1b\\\x1b_Ga=t,i=8,s=1,v=1,q=2;BQYHCA==\x1b\\\x1b_Ga=f,i=8,r=2,z=50,C=1,q=2;CQoLDA==\x1b\\\x1b_Ga=a,i=8,s=3,r=1,z=40,q=2\x1b\\\x1b_Ga=p,i=8,p=2,P=7,Q=1,H=20,q=2\x1b\\\x1b_Ga=p,i=8,p=3,U=1,q=2\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[38;5;7;58;5;1m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m")).stateChanged());
+    try std.testing.expectEqual(@as(?u32, null), terminal.serviceAnimations(100 * ms).next_ms);
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[38;5;8;58;5;3m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m")).stateChanged());
+    try std.testing.expectEqual(@as(?u32, 40), terminal.serviceAnimations(200 * ms).next_ms);
+    try std.testing.expect(terminal.serviceAnimations(240 * ms).changed);
+    try std.testing.expectEqualSlices(u8, &.{ 9, 10, 11, 12 }, terminal.images(0).image(1).?.pixels);
 }
