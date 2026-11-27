@@ -2814,9 +2814,17 @@ pub const Plane = struct {
     }
 
     fn kittyImageIndex(self: *const Plane, id: u32, bank: Bank) ?usize {
-        for (self.images[0..self.image_count], 0..) |retained, index|
-            if (retained.bank == bank and retained.kitty_id == id) return index;
-        return null;
+        // Nonzero client IDs are unique within a bank. For anonymous
+        // images, choose the oldest retained identity independently of
+        // dense slot compaction; the protocol specifies no zero-ID tie-break.
+        var oldest: ?usize = null;
+        for (self.images[0..self.image_count], 0..) |retained, index| {
+            if (retained.bank != bank or retained.kitty_id != id) continue;
+            if (id != 0) return index;
+            if (oldest == null or retained.id < self.images[oldest.?].id)
+                oldest = index;
+        }
+        return oldest;
     }
 
     fn imageIndex(self: *const Plane, id: u32) ?usize {
@@ -6270,4 +6278,40 @@ test "Kitty feature query and conflicting identity rejection preserve pending fr
     try std.testing.expectEqual(@as(?u32, 2), completed.response_frame);
     try std.testing.expectEqual(@as(u2, 2), completed.quiet);
     try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.frames[0].pixels);
+}
+
+test "Kitty anonymous placeholder lookup is stable across unrelated dense image retirement" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    for ([_][]const u8{
+        "a=t,i=9,s=1,v=1;AQIDBA==",
+        "a=T,U=1,p=7,s=1,v=1;BQYHCA==",
+        "a=T,i=0,U=1,p=8,s=1,v=1;CQoLDA==",
+    }) |packet| try std.testing.expect((try plane.command(packet, .primary, 0, 0, 0, 8, 16)).changed);
+    const first = plane.virtualPrototype(.primary, 0, 0).?;
+    try std.testing.expectEqual(plane.images[1].id, first.image_id);
+    try std.testing.expect(plane.virtualPrototype(.primary, 0, 7) == null);
+    try std.testing.expect(plane.virtualPrototype(.primary, 0, 8) == null);
+    try std.testing.expect((try plane.command("a=T,U=1,s=1,v=1;DQ4PEA==", .alternate, 0, 0, 0, 8, 16)).changed);
+    // Clear the other bank, then retire the named primary entry. The
+    // latter compacts the table by swapping the newest anonymous image
+    // into its first slot; primary lookup must not change.
+    const alternate = plane.virtualPrototype(.alternate, 0, 0).?;
+    try std.testing.expect(plane.clearBank(.alternate));
+    try std.testing.expect(plane.virtualPrototype(.alternate, 0, 0) == null);
+    try std.testing.expect((try plane.command("a=d,d=I,i=9", .primary, 0, 0, 0, 8, 16)).changed);
+    try std.testing.expectEqualDeep(first, plane.virtualPrototype(.primary, 0, 0).?);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, plane.images[plane.imageIndex(first.image_id).?].pixels);
+    try std.testing.expect(plane.imageIndex(alternate.image_id) == null);
+}
+
+test "Kitty anonymous physical image does not lend its identity to a later virtual image" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command("a=T,C=1,s=1,v=1;AQIDBA==", .primary, 0, 0, 0, 8, 16)).changed);
+    try std.testing.expect((try plane.command("a=T,U=1,s=1,v=1;BQYHCA==", .primary, 0, 0, 0, 8, 16)).changed);
+    const virtual = plane.images[1].id;
+    try std.testing.expect(plane.virtualPrototype(.primary, 0, 0) == null);
+    try std.testing.expect((try plane.command("a=d,d=A", .primary, 0, 0, 0, 8, 16)).changed);
+    try std.testing.expectEqual(virtual, plane.virtualPrototype(.primary, 0, 0).?.image_id);
 }

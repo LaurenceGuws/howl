@@ -7189,3 +7189,36 @@ test "Kitty interrupted upload remains pending until the new command is admitted
     try std.testing.expectEqualSlices(u8, filler[1..], terminal.replyBytes()[0 .. filler.len - 1]);
     try std.testing.expectEqualStrings("\x1b_Gi=7,p=9;OK\x1b\\", terminal.replyBytes()[filler.len - 1 ..]);
 }
+
+test "Kitty anonymous placeholder remains bound through unrelated image deletion" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(8, 16);
+    const placeholder = "\x1b[1;1H\x1b[38;5;0m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b[0m";
+    try feed(&terminal, "\x1b_Ga=t,i=9,s=1,v=1,q=2;AQIDBA==\x1b\\" ++
+        "\x1b_Ga=T,U=1,s=1,v=1,q=2;BQYHCA==\x1b\\" ++
+        "\x1b_Ga=T,i=0,U=1,s=1,v=1,q=2;CQoLDA==\x1b\\" ++ placeholder);
+    const before = terminal.images(0);
+    var iterator = before.placementIterator();
+    const projected = iterator.next().?;
+    try std.testing.expectEqual(before.image(1).?.id, projected.placement.image_id);
+    const image_generation = before.image(1).?.generation;
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, before.image(1).?.pixels);
+    try std.testing.expect(iterator.next() == null);
+    try feed(&terminal, "\x1b_Ga=d,d=I,i=9\x1b\\");
+    const after = terminal.images(0);
+    iterator = after.placementIterator();
+    var expected = projected;
+    // Virtual geometry is stamped with the current semantic revision.
+    // Its underlying image ID, content generation and pixels stay put.
+    try std.testing.expect(after.semantic_generation > before.semantic_generation);
+    expected.placement.generation = after.semantic_generation;
+    try std.testing.expectEqualDeep(expected, iterator.next().?);
+    try std.testing.expect(iterator.next() == null);
+    try std.testing.expectEqual(@as(usize, 2), after.imageCount());
+    const image = after.image(1).?;
+    try std.testing.expectEqual(projected.placement.image_id, image.id);
+    try std.testing.expectEqual(image_generation, image.generation);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, image.pixels);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}

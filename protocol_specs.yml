@@ -10418,6 +10418,15 @@ specifications:
       - file: howl-vt/src/terminal.zig
         test: image projection requires a virtual prototype in the viewed bank
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous placeholder lookup is stable across unrelated dense image retirement
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous physical image does not lend its identity to a later virtual image
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty anonymous placeholder remains bound through unrelated image deletion
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Pinned handle_put_command accepts anonymous virtual placements without assigning the supplied p or advancing
@@ -10438,6 +10447,19 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_09:
+          scope: Anonymous id-zero placeholder lookup now chooses the oldest retained matching internal image in the viewed bank,
+            independently of dense image slot order. A preceding physical-only anonymous image remains the selected image, not
+            a later virtual prototype. After that physical image is removed the next anonymous virtual image is eligible. Unrelated
+            named deletion and alternate clear preserve the selected primary prototype; actual wire projection preserves canonical
+            image identity/content generation/pixels and exact geometry while semantic projection revision advances. This is Howl
+            deterministic tie-break policy; pinned author uses first hash-map match and does not specify anonymous ordering.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644 anonymous placement IDs and715-815 Unicode placeholders; graphics.c img_by_client_id217-220, find_or_create_image645-660
+            and grman_put_cell_image1257-1292; graphics.h image_map and kitty-verstable.h hash-table iteration. Deterministic
+            local tie-break where author protocol specifies no anonymous ordering; Plane red-green and wire projection proof;
+            no blanket FULL promotion
+          baseline: 5434c16752d867f58d245ec74ca399df59550926
     - id: relative
       section: Relative placements
       level: defined
@@ -10559,6 +10581,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty ordinary interruption retires only the local pending transfer
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous placeholder lookup is stable across unrelated dense image retirement
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty anonymous placeholder remains bound through unrelated image deletion
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Uppercase directly matched images and orphan descendants share a post-closure reclaim set; stable image-slot
@@ -10587,6 +10615,16 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_qualification_20261127_kitty_graphics_09:
+          scope: Selected uppercase I deletion of an unrelated named image retires its storage but does not rebind a surviving
+            anonymous virtual placeholder when the dense image inventory compacts. Other-bank clear and anonymous physical A retirement
+            cases independently proved. No new general selector or quota policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644 anonymous placement IDs and715-815 Unicode placeholders; graphics.c img_by_client_id217-220, find_or_create_image645-660
+            and grman_put_cell_image1257-1292; graphics.h image_map and kitty-verstable.h hash-table iteration. Deterministic
+            local tie-break where author protocol specifies no anonymous ordering; Plane red-green and wire projection proof;
+            no blanket FULL promotion
+          baseline: 5434c16752d867f58d245ec74ca399df59550926
     - id: replies
       section: Suppressing responses from the terminal
       level: defined
@@ -11176,6 +11214,12 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: Kitty same client ID in another bank preserves held output and clears only alternate resources
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous placeholder lookup is stable across unrelated dense image retirement
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty anonymous physical image does not lend its identity to a later virtual image
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
           scope: Selected p acknowledgement and same-ID replacement retained output proof. Existing local explicit image-ID
@@ -11211,6 +11255,16 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_qualification_20261127_kitty_graphics_09:
+          scope: Distinct anonymous internal resources remain distinct; ignored supplied placement IDs cannot address id-zero
+            virtual prototypes. Deterministic oldest retained anonymous image selection survives unrelated dense compaction without
+            changing unique nonzero client-ID lookup or bank scoping. No claim that the author hash-map order is equivalent.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs635-644 anonymous placement IDs and715-815 Unicode placeholders; graphics.c img_by_client_id217-220, find_or_create_image645-660
+            and grman_put_cell_image1257-1292; graphics.h image_map and kitty-verstable.h hash-table iteration. Deterministic
+            local tie-break where author protocol specifies no anonymous ordering; Plane red-green and wire projection proof;
+            no blanket FULL promotion
+          baseline: 5434c16752d867f58d245ec74ca399df59550926
     - id: placement-layout
       section: docs/graphics-protocol.rst:667-688
       level: defined
