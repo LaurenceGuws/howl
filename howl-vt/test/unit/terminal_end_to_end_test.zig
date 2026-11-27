@@ -7370,3 +7370,95 @@ test "Kitty row scrolls keep horizontal margin crossing image stationary" {
         try std.testing.expectEqual(before.content_generation, after.content_generation);
     }
 }
+
+test "Kitty indexed animation restriction rejects both formats under every quiet mode and split" {
+    for ([_]struct { format: u8, data: []const u8 }{
+        .{ .format = 8, .data = "Ag==" },
+        .{ .format = 16, .data = "AoA=" },
+    }) |format| for ([_]bool{ false, true }) |alternate| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try terminal.setCellPixelSize(1, 1);
+        if (alternate) try feed(&terminal, "\x1b[?47h");
+        var packet: [160]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&packet, "\x1b_Ga=T,I=77,f={d},s=1,v=1,C=1,q=2;{s}\x1b\\", .{ format.format, format.data }));
+        const before = terminal.images(0);
+        const image = before.image(0).?;
+        const pixels: [4]u8 = image.pixels[0..4].*;
+        const placement = before.placement(0).?;
+        for ([_]struct { prefix: []const u8, fields: []const u8, frame: []const u8, data: []const u8 }{
+            .{ .prefix = "a=f", .fields = ",s=1,v=1,r=2,C=1", .frame = ",r=2", .data = ";AQIDBA==" },
+            .{ .prefix = "a=f", .fields = ",s=1,v=1,r=1", .frame = ",r=1", .data = ";AQIDBA==" },
+            .{ .prefix = "a=a", .fields = ",s=3", .frame = "", .data = "" },
+            .{ .prefix = "a=a", .fields = ",c=1", .frame = "", .data = "" },
+            .{ .prefix = "a=c", .fields = ",r=1,c=1,w=1,h=1", .frame = "", .data = "" },
+        }) |operation| for ([_]struct { request: []const u8, reply: []const u8 }{
+            .{ .request = "i=1", .reply = "i=1" },
+            .{ .request = "I=77", .reply = "i=1,I=77" },
+        }) |identity| for ([_]u8{ 0, 1, 2 }) |quiet| {
+            const wire = try std.fmt.bufPrint(&packet, "\x1b_G{s},{s}{s},q={d}{s}\x1b\\", .{ operation.prefix, identity.request, operation.fields, quiet, operation.data });
+            var reply: [96]u8 = undefined;
+            const expected = if (quiet == 2) "" else try std.fmt.bufPrint(&reply, "\x1b_G{s}{s};EINVAL\x1b\\", .{ identity.reply, operation.frame });
+            for (0..wire.len + 1) |split| {
+                const first = try terminal.feed(wire[0..split]);
+                try std.testing.expect(!first.mutations.images);
+                if (split != wire.len) try std.testing.expectEqualStrings("", terminal.replyBytes());
+                const last = try terminal.feed(wire[split..]);
+                try std.testing.expect(!last.mutations.images);
+                try std.testing.expectEqualStrings(expected, terminal.replyBytes());
+                try consumeReplies(&terminal);
+                const after = terminal.images(0);
+                try std.testing.expectEqual(before.generation, after.generation);
+                try std.testing.expectEqual(before.content_generation, after.content_generation);
+                try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+                try std.testing.expectEqual(@as(usize, 1), after.placementCount());
+                try std.testing.expectEqualDeep(placement, after.placement(0).?);
+                try std.testing.expectEqual(image.id, after.image(0).?.id);
+                try std.testing.expectEqual(image.generation, after.image(0).?.generation);
+                try std.testing.expectEqualSlices(u8, &pixels, after.image(0).?.pixels);
+            }
+        };
+        try std.testing.expectEqual(@as(?u32, null), terminal.serviceAnimations(100 * std.time.ns_per_ms).next_ms);
+        try std.testing.expect(!(try terminal.feed("\x1b_Ga=f,m=0,q=2;AQIDBA==\x1b\\")).mutations.images);
+        try std.testing.expectEqual(before.generation, terminal.images(0).generation);
+        // Valid retransmission of the same client identity as RGBA must
+        // remove the indexed restriction and allow a real animation frame.
+        try feed(&terminal, "\x1b_Ga=T,i=1,s=1,v=1,C=1,q=2;AQIDBA==\x1b\\");
+        try feed(&terminal, "\x1b_Ga=f,i=1,r=2,z=40,C=1;BQYHCA==\x1b\\");
+        try std.testing.expectEqualStrings("\x1b_Gi=1,r=2;OK\x1b\\", terminal.replyBytes());
+        try consumeReplies(&terminal);
+    };
+}
+
+test "Kitty unsupported host media are uniformly refused without retained mutation" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try feed(&terminal, "\x1b_Ga=T,i=7,C=1,q=2,s=1,v=1;AQIDBA==\x1b\\");
+    const before = terminal.images(0);
+    const placement = before.placement(0).?;
+    // Payload is intentionally just a harmless synthetic name, not an
+    // actual filesystem path or shared-memory object. No host access grant.
+    for ([_]u8{ 'f', 't', 's' }) |medium| for ([_]u8{ 't', 'T', 'q' }) |action| for ([_]u8{ 0, 1, 2 }) |quiet| {
+        var packet: [96]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&packet, "\x1b_Ga={c},t={c},i=7,q={d},s=1,v=1;bmFtZQ==\x1b\\", .{ action, medium, quiet });
+        for (0..wire.len + 1) |split| {
+            try std.testing.expect(!(try terminal.feed(wire[0..split])).mutations.images);
+            if (split != wire.len) try std.testing.expectEqualStrings("", terminal.replyBytes());
+            try std.testing.expect(!(try terminal.feed(wire[split..])).mutations.images);
+            try std.testing.expectEqualStrings(if (quiet == 2) "" else "\x1b_Gi=7;ENOTSUP\x1b\\", terminal.replyBytes());
+            try consumeReplies(&terminal);
+            const after = terminal.images(0);
+            try std.testing.expectEqual(before.generation, after.generation);
+            try std.testing.expectEqual(before.content_generation, after.content_generation);
+            try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+            try std.testing.expectEqualDeep(placement, after.placement(0).?);
+            try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, after.image(0).?.pixels);
+            try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+        }
+        try feed(&terminal, try std.fmt.bufPrint(&packet, "\x1b_Ga=q,i=31,e={c},t={c}\x1b\\", .{ action, medium }));
+        var reply: [64]u8 = undefined;
+        try std.testing.expectEqualStrings(try std.fmt.bufPrint(&reply, "\x1b_Gi=31,e={c};OK\x1b\\", .{action}), terminal.replyBytes());
+        try consumeReplies(&terminal);
+    };
+}

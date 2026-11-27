@@ -10196,6 +10196,12 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Bounded APC G capture, parser key/value and duplicate-key admission, direct packet/continuation ownership;
+            cancellation, capture overflow, reply backpressure and bank isolation have executable evidence.
+          residual: Whole source grammar, every malformed/unknown metadata form and raw C0/C1 framing interaction not exhausted;
+            no universal recovery equivalence.
     - id: rgb-rgba
       section: Transferring pixel data / RGB and RGBA data
       level: defined
@@ -10208,6 +10214,18 @@ specifications:
         legacy_records:
         - kitty.graphics.transmit
         - kitty.graphics.transmit_display
+      - file: howl-vt/src/graphics.zig
+        test: RGB conversion quota cancellation and bank cleanup preserve exact ownership
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: static image allocation failure leaves the plane reusable
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: f=24 expands RGB with opaque alpha; f=32/default retains exact RGBA, explicit dimensions and bounded
+            raw byte count; staged and replacement allocations transactional.
+          residual: Full dimension/byte-count boundary matrix and end-to-end sRGB/blending presentation not source-complete.
     - id: indexed-8
       section: Indexed color data
       level: defined
@@ -10219,6 +10237,22 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.graphics.format_indexed8
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: newer Kitty indexed formats reject surplus pixel bytes without leaking image state'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: indexed Kitty zlib, query, stack restore and forbidden animation preserve owned bytes'
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: native indexed Kitty images refresh palette-derived pixels without changing held graphics
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: One-byte indexed source retained, projected opaque RGBA follows canonical palette and configured defaults;
+            indexed zlib, queries and malformed size rejection verified.
+          residual: All palette entries, full split/allocation and palette-update state matrix not exhausted; indexed special
+            slot 254 remains different.
     - id: indexed-16
       section: Indexed color data
       level: defined
@@ -10231,6 +10265,22 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.graphics.format_indexed16
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty indexed 16-bit transparent pixel remains transparent across palette changes'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: newer Kitty indexed formats reject surplus pixel bytes without leaking image state'
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: static image allocation failure leaves the plane reusable
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Two-byte index/alpha source retained; live RGB updates preserve alpha including 0 and 128; zlib and
+            replacement cleanup proved.
+          residual: Full alpha/palette Cartesian product, edge byte counts and output blending not exhausted; special slot 254
+            remains different.
     - id: indexed-special
       section: Indexed color data
       level: defined
@@ -10251,6 +10301,16 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty indexed image special palette slots are live with foreground and background fallbacks'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty indexed 16-bit transparent pixel remains transparent across palette changes'
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Slots 248-253 and 255 follow default/selection/cursor colors and documented configured-color fallbacks;
+            indexed alpha remains independent.
+          residual: Slot 254 uses ordinary foreground instead of dedicated URL-hover color. Window opacity/compositing and all
+            live host color changes not fully qualified.
     - id: png
       section: PNG data
       level: defined
@@ -10266,6 +10326,15 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty direct chunks enforce encoded bounds and nonfinal quantum before image admission
         relation: protocol-family
+      - file: howl-vt/src/png.zig
+        test: PNG RGBA RGB indexed grayscale and Adam7 restore exact pixels
+        relation: protocol-family
+      - file: howl-vt/src/png.zig
+        test: PNG 16-bit samples preserve high bytes without overflowing RGBA
+        relation: protocol-family
+      - file: howl-vt/src/png.zig
+        test: PNG malformed DEFLATE and unknown critical chunks fail with valid outer CRCs
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: 'Existing f100 decoder and shared chunk path qualified: PNG-derived dimensions, explicit matching dimensions
@@ -10277,6 +10346,12 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Bounded PNG chunk admission, dimensions from PNG, RGB/RGBA/indexed/grayscale, 16-bit samples and Adam7
+            decoder cases; CRC, malformed deflate, unknown critical chunk and allocation rejection tests.
+          residual: Not every legal PNG color/depth/transparency/chunk combination or compressed PNG boundary is mechanically
+            qualified; frame PNG admission absent.
     - id: compressed
       section: Compression
       level: defined
@@ -10295,6 +10370,9 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty PNG f=100 is chunked bounded and transactional through the graphics plane
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: indexed Kitty zlib, query, stack restore and forbidden animation preserve owned bytes'
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Existing zlib raw/frame and PNG wrapped decompression proofs retained under common encoded-chunk admission.
@@ -10303,11 +10381,28 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Bounded zlib decode before format interpretation, exact checksum/length and rollback cases for direct
+            raw, indexed, PNG and selected frame data.
+          residual: All compression/format/declared-size/trailing-stream combinations and hostile allocation paths not exhausted.
     - id: mediums
       section: The transmission medium
       level: defined
       wire: t=d|f|t|s
       rule: Specifies direct and local-file/shared-memory transmission media with the applicable local/remote rules.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty unsupported host media are uniformly refused without retained mutation
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-local-media-boundary
+          verified_subset: Direct t=d/default implemented. Valid addressed ordinary t=f/t/s requests for a=t/T/q return ENOTSUP
+            (or q=2 silence), leave retained images/placements unchanged, emit no host consequence; feature queries omit those
+            media.
+          residual: No file, temporary-file, POSIX or Windows shared-memory read/unlink implementation or host authorization.
+            Defer non-direct media to a separate host-boundary decision, not a permanent exclusion or claimed file privacy implementation.
     - id: query
       section: Querying support and available transmission mediums
       level: defined
@@ -10327,6 +10422,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty ordinary interruption retires only the local pending transfer
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty query action capability precedes DA1 without retained data'
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty graphics detection accepts a direct query with exact S size
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_08:
           scope: Normal image-data probe, unlike e= feature observation, is an ordinary non-continuation command in local recovery
@@ -10337,6 +10438,12 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Direct probe validates input without retaining/replacing image; ordered query reply precedes DA1, action-feature
+            observation remains separate.
+          residual: Full valid/invalid ID/default/format query matrix and unavailable local media remain scoped; no claim of all
+            query reply semantics.
     - id: put
       section: Display images on screen
       level: defined
@@ -10420,6 +10527,12 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Named/numbered image lookup is bank-local; physical, virtual and relative placement admission, replacement,
+            rollback, capacity and held-cut identity evidence.
+          residual: Aspect-preserving two-axis layout and complete viewport/relative geometry remain incomplete. Presentation
+            resource limit is distinct from VT admission.
     - id: unicode
       section: Unicode placeholders
       level: defined
@@ -10471,6 +10584,15 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty partial text erasures preserve physical placements and remove only erased placeholder projections
+        relation: protocol-family
+      - file: howl-vt/src/kitty_placeholders.zig
+        test: Kitty row-column diacritics retain canonical indices
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Unicode-placeholder Kitty image projects without rasterizing its reserved scalar
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: native image output follows Unicode virtual parent cells with immutable held graphics
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
@@ -10541,6 +10663,12 @@ specifications:
             src/terminal/Terminal.zig4275-4590 and kitty/graphics_storage.zig557-755. Deterministic wire red-green plus preserved
             Sixel geometry tests; scoped source-backed policy, no blanket FULL promotion.
           baseline: 86094955a64b6f448b00a9ca1e84197c86523e39
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Canonical placeholder text projection, virtual prototype identity, bank-local lookup, anonymous stable
+            tie-break, parent anchors, text erasure and held-output behavior.
+          residual: Full diacritic omission/inheritance/color-ID matrix, wide/multicell and reflow clipping, independently selected
+            history animation and multiple virtual matches not source-complete.
     - id: relative
       section: Relative placements
       level: defined
@@ -10590,6 +10718,15 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty history cutoff retains crossing root geometry until its entire extent retires
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty physical ancestry keeps sixteen bounded parent links and rejects cycles transactionally
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty physical P Q placement admits signed offsets without moving the cursor and cascades deletion
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty relative placement keeps parent identity across unrelated dense-slot retirement
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
@@ -10652,6 +10789,12 @@ specifications:
             Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
             promotion
           baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Bounded sixteen-link ancestry, signed offsets, missing parent/cycle/depth rejection, stable parent
+            slots, virtual parent positioning and group retirement.
+          residual: Children independently visible after root expiry, full virtual-anchor/viewport and extreme geometry/error
+            matrix remain open.
     - id: delete
       section: Deleting images
       level: defined
@@ -10714,6 +10857,15 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty uppercase identity deletion honors placement id before reclaiming image data
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty uppercase all deletion preserves unrelated initially unplaced images
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty uppercase geometric selectors reclaim matched data without sweeping other images
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
           scope: Uppercase directly matched images and orphan descendants share a post-closure reclaim set; stable image-slot
@@ -10762,6 +10914,12 @@ specifications:
             src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
             byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
           baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Matched-only retirement, uppercase last-reference reclaim, named lowercase retention, anonymous/descendant
+            reclamation, bank-local IDs and frame ownership.
+          residual: Every geometry/selector/bank/history/virtual combination, frame deletion edge and malformed reply behavior
+            not exhausted; preserve prior local recovery policy.
     - id: replies
       section: Suppressing responses from the terminal
       level: defined
@@ -10812,6 +10970,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: Kitty interrupted upload remains pending until the new command is admitted
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty indexed animation restriction rejects both formats under every quiet mode and split
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty unsupported host media are uniformly refused without retained mutation
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -10874,6 +11038,12 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: q=0/1/2 and inherited quiet, response i/I/p/r, normal/error identity, exact reply-pressure retry and
+            DA1 ordering across selected input profiles.
+          residual: Full error-token/identity/quiet cross-product, malformed parse loss of identity, feature/default interactions
+            and non-direct protocol parity remain open.
     - id: frame-load
       section: Animation / Transferring animation frame data
       level: defined
@@ -10920,6 +11090,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty actual byte quota prefers unplaced data and retires oldest placed frames under pressure
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty frame capacity rejects the next frame without retained mutation
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty indexed animation restriction rejects both formats under every quiet mode and split
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -10985,6 +11161,12 @@ specifications:
             src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
             byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
           baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-animation-closing-profile
+          verified_subset: RGB/RGBA frame append/edit, background/base composition, z gaps, inherited continuation metadata, bounded
+            storage and reject/cleanup cases; indexed-image guard qualified separately.
+          residual: PNG frame input not implemented; shared non-evicting frame quota, action-specific defaults and all geometry/format/size/error
+            cases not source-complete.
     - id: animation
       section: Animation / Controlling animations
       level: defined
@@ -11022,6 +11204,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/terminal.zig
         test: Kitty graphics reset distinguishes DECSTR and complete RIS ownership
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty indexed animation restriction rejects both formats under every quiet mode and split
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_07:
@@ -11062,6 +11247,12 @@ specifications:
             Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
             promotion
           baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-animation-closing-profile
+          verified_subset: Caller-monotonic frame service, gapless root, finite/loading/running controls, active live viewport
+            visibility, virtual children and reset.
+          residual: Host-selected scrollback and window visibility, full timing/loop/loading/frame-delete transition matrix and
+            actual presentation cadence remain open.
     - id: composition
       section: Animation / Composing animation frames
       level: defined
@@ -11075,6 +11266,15 @@ specifications:
         - kitty.graphics.compose
       - file: howl-vt/src/graphics.zig
         test: Kitty ordinary interruption retires only the local pending transfer
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty composition owns root and nonoverlapping same-frame edits
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty frame composition honors documented w/h rectangle without using s/v
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty indexed animation restriction rejects both formats under every quiet mode and split
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_07:
@@ -11093,6 +11293,12 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-animation-closing-profile
+          verified_subset: Root/frame-region compositing, w/h with legacy s/v fallback, same-frame nonoverlapping edit, bounded
+            rectangle and allocation ownership; indexed guard separate.
+          residual: Full alpha/rectangle/default/error/hidden-frame combinations, optional transient hint propagation when used
+            and exact storage policy not exhausted.
     - id: no-indexed-animation
       section: Indexed color data
       level: defined
@@ -11104,6 +11310,19 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty_delta.graphics.format_indexed16
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty indexed animation restriction rejects both formats under every quiet mode and split
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-indexed-animation-restriction
+          verified_subset: Source prohibition implemented by shared indexed-source guards in frame, animate and composeFrames
+            before frame allocation or mutation. New wire matrix covers f=8/16, primary/alternate, i/I, root/new frame, start/select,
+            compose, q=0/1/2, every two-fragment split, exact errors and unchanged retained identity/pixels/geometry; no wake
+            deadline and valid RGBA retransmission positive control.
+          residual: FULL is only the selected prohibition on valid addressed direct commands resolving an indexed image in the
+            standard 7-bit APC profile. General malformed/interruption/reply-pressure/host media semantics and the broader indexed
+            and animation clauses are assessed separately.
     - id: quota
       section: Image persistence and storage quotas
       level: defined
@@ -11147,6 +11366,12 @@ specifications:
       - file: howl-vt/src/graphics.zig
         test: Kitty anonymous final placement retirement releases only matched unreachable images
         relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: eight visible Kitty images fail output admission while canonical state progresses
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: eight completely clipped Kitty images do not consume output resource quota
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_03:
           scope: Full placement table (16384) accepts a new placement for a replacement image whose existing group frees capacity;
@@ -11181,6 +11406,14 @@ specifications:
             src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
             byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
           baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Actual 64 MiB allocated retained-byte pressure, unplaced-first eviction, oldest placed fallback plus
+            frame reclaim, protected replacement, 256 image/256 frame and 16384 placement slot bounds, allocator failure; selected
+            anonymous retirement.
+          residual: Global retained budget and generation order differ from author example per-bank/access-time/disk-cache strategies;
+            permitted local policy, not an automatic bug. Non-evicting frame admission and presentation cap of seven visible images
+            remain separate integration limits.
     - id: direct-chunks
       section: docs/graphics-protocol.rst:470-495
       level: defined
@@ -11359,6 +11592,12 @@ specifications:
             Deterministic Plane and terminal history-boundary red-green, existing reset-policy positive proof; no blanket FULL
             promotion
           baseline: 44b6c27be7c95869d1626d91ee269c96c226c027
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: 4096 encoded cap, nonfinal quantum, staged exact bytes and final-cursor admission, both bank slots,
+            cancel/overflow/reply-pressure, interrupted upload and feature-query exception.
+          residual: Exact author frame continuation requirement (explicit a=f) versus accepted omitted-action compatibility, malformed
+            action/metadata recovery and complete format/boundary cross-product remain distinct.
     - id: feature-query
       section: docs/graphics-protocol.rst:548-609
       level: defined
@@ -11389,6 +11628,12 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty feature query and conflicting identity rejection preserve pending frame metadata
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty graphics feature queries return exact advertised keys without changing the plane
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty unsupported host media are uniformly refused without retained mutation
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
@@ -11426,6 +11671,13 @@ specifications:
             handle_delete_command2698-2699 and grman_handle_command2823-2935. Deterministic local recovery policy for out-of-contract
             interleaving, Plane red-green and wire/service boundary tests; no blanket FULL promotion
           baseline: a3d5d2eebf24fee8c78a7bbf9173ff71d7b7c457
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-direct-data-closing-profile
+          verified_subset: Read-only e query, action-specific advertised keys, no cancellation of valid pending transfer, exact
+            reply bounds and DA1 ordering; unavailable media omitted.
+          residual: Source excludes defaults while current formatter can echo explicitly requested default-valued fields (e.g.
+            t=d, f=32); complete action/key/value/default/invalid matrix and truthful conditional layout/output feature boundaries
+            not exhausted.
     - id: image-number
       section: docs/graphics-protocol.rst:967-996
       level: defined
@@ -11443,6 +11695,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty client IDs and numbered images are bank local with global resource identities
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty image-number lookup selects newest identity after dense image compaction
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_02:
@@ -11462,6 +11717,12 @@ specifications:
             graphics.c img_by_client_id/number, get_free_client_id, grman_handle_command, filter_refs and grman_clear; deterministic
             Plane red-green, wire/service and held-output tests; no blanket FULL promotion
           baseline: fa7f65fde342447876d58a3b21fc926b0096c0a2
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Number allocation and newest internal-ID lookup in admitting bank, exact i/I response, identity compaction,
+            put/delete and simultaneous nonzero i/I rejection.
+          residual: Author says both keys present is error; zero-valued conflicting-field presence is not equivalently rejected
+            by current nonzero guard. Full number reuse/slot pressure and reply combinations remain open.
     - id: placement-identity
       section: docs/graphics-protocol.rst:635-660
       level: defined
@@ -11555,6 +11816,11 @@ specifications:
             local tie-break where author protocol specifies no anonymous ordering; Plane red-green and wire projection proof;
             no blanket FULL promotion
           baseline: 5434c16752d867f58d245ec74ca399df59550926
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Nonzero pair replaces exact placement; zero/omitted p accumulates, anonymous p ignored; explicit retransmission
+            retires prior local group only after full admission; internal resource ID stable and held cut immutable.
+          residual: Full numeric boundary/overflow, parent replacement combinations and output-capacity behavior not exhausted.
     - id: placement-layout
       section: docs/graphics-protocol.rst:667-688
       level: defined
@@ -11584,6 +11850,13 @@ specifications:
             docs lines667-688; graphics.c handle_put_command/update_dest_rect and render-data destination rectangle; deterministic
             red-green and existing scope proofs; no blanket FULL promotion
           baseline: a4a0380797a385c369750dc8437a15da6369bf58
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Source rectangle intersects image bounds, offset checks, one-axis aspect-ratio derivation and direct
+            destination/crop output tested.
+          residual: 'Concrete implementation gap: makePlacement uses both requested destination axes directly and subtracts offsets;
+            no required aspect-preserving letterbox/pillarbox when both c and r are specified. Full clipped viewport and rounding/resize
+            matrix remains open.'
     - id: placement-z-order
       section: docs/graphics-protocol.rst:690-698
       level: defined
@@ -11609,6 +11882,12 @@ specifications:
             docs lines690-698; graphics.c render data image_id/ref_id and comparison; deterministic red-green and existing scope
             proofs; no blanket FULL promotion
           baseline: a4a0380797a385c369750dc8437a15da6369bf58
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Output partitions deep-negative (<INT32_MIN/2), negative and nonnegative commands; equal-z uses stable
+            internal resource ID as pinned implementation does.
+          residual: Author wording lower image ID vs pinned internal ID distinction retained. Exact threshold, alpha blending,
+            all overlap permutations and physical presentation not exhausted.
     - id: placement-cursor-policy
       section: docs/graphics-protocol.rst:700-710
       level: defined
@@ -11627,6 +11906,9 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty placement cursor advance scrolls history without detaching image'
         relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty physical P Q placement admits signed offsets without moving the cursor and cascades deletion
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_04:
           scope: Existing tests cover suppressed movement, physical display and re-put default movement, and history scroll retaining
@@ -11636,6 +11918,12 @@ specifications:
             docs lines700-710; graphics.c handle_put_command cursor movement; deterministic red-green and existing scope proofs;
             no blanket FULL promotion
           baseline: a4a0380797a385c369750dc8437a15da6369bf58
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: C=1 suppresses cursor motion; default movement and history scroll use canonical VT ownership; relative/virtual
+            placements do not move the cursor in selected cases.
+          residual: All dimensions, overflow/wrap, active margin and resize interactions not mechanically complete; author permits
+            implementation-defined offscreen placement result.
     - id: delete-selectors
       section: docs/graphics-protocol.rst:907-952
       level: defined
@@ -11663,6 +11951,18 @@ specifications:
         relation: protocol-family
       - file: howl-vt/src/graphics.zig
         test: Kitty anonymous leaf retirement does not reclaim a surviving virtual prototype or unrelated data
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty six geometric deletions exclude virtual placement prototypes
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty physical relative placements participate in all six geometry deletion selectors
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty clipped margin geometry respects all six matched-only deletion selectors
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty frame deletion defaults to root and uppercase retires frame-less image
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_06:
@@ -11693,6 +11993,12 @@ specifications:
             src/terminal/kitty/graphics_storage.zig evictImageExcept1823-1907; deterministic Plane red-green and real retained
             byte pressure, existing wire geometry and allocation-failure proofs; no blanket FULL promotion
           baseline: f428ce316c4fa11670a57a4025e93519e4b1aa3a
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Lower/upper selector families, exact matched references, number and ID scope, geometric negative cases,
+            frame deletion and selected pending-transfer abort.
+          residual: Complete all selectors including actual visible rectangle clipping, relative/virtual/history combinations
+            and frame default/range errors not exhausted.
     - id: file-read-privacy
       section: docs/graphics-protocol.rst:388-443
       level: defined
@@ -11702,6 +12008,17 @@ specifications:
       rule: Regular files only; bounded symlink resolution; pre-open reject special files. Temporary deletion restricted to
         known directory and protocol filename. POSIX SHM names passed unchanged incl no leading slash, read/unlink/close;
         Windows close. File-read failures indistinguishable to client.
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-local-media-boundary
+          verified_subset: No host image-file/shared-memory read path is selected; ordinary non-direct transport is refused without
+            host consequence. This is a refusal boundary, not implementation of file-read privacy.
+          residual: 'Deferred conditional contract: host-owned permission and safe regular-file resolution, pre-open type/path
+            checks, uniform failure, scoped temporary deletion and SHM name/lifetime rules must be designed and independently
+            qualified before any enablement.'
+      disposition: deferred
+      disposition_reason: Conditional future host-owned non-direct media contract; no host access grant. Direct-only graphics
+        profile remains active.
     - id: usage-hints
       section: docs/graphics-protocol.rst:1001-1017
       level: defined
@@ -11709,6 +12026,20 @@ specifications:
       dispatch:
       - APC G
       rule: N bit1 transient hint, may ignore; caching/eviction, propagates through frame composition, no placement effect.
+      test_locations:
+      - file: howl-vt/src/graphics.zig
+        test: Kitty usage hints are bounded advisory no-op metadata
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty graphics feature queries return exact advertised keys without changing the plane
+        relation: protocol-family
+      evidence:
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-advisory-usage-hints
+          verified_subset: N parsed as bounded u32 bitmask; N=1 accepted in direct static/frame commands, parser rejects overflow/duplicate,
+            no retained hint/caching state, feature echo for supported N=1. Source explicitly permits ignoring the hint.
+          residual: Selected advisory-ignore policy is permitted, not missing cache optimization. Existing test does not exhaust
+            wire splits, default/placement/compose/format/quiet and unknown-bit interactions; retain PARTIAL for this facet.
     - id: terminal-interaction
       section: docs/graphics-protocol.rst:1320-1337
       level: defined
@@ -11867,6 +12198,13 @@ specifications:
             src/terminal/Terminal.zig4275-4590 and kitty/graphics_storage.zig557-755. Deterministic wire red-green plus preserved
             Sixel geometry tests; scoped source-backed policy, no blanket FULL promotion.
           baseline: 86094955a64b6f448b00a9ca1e84197c86523e39
+        howl_closing_review_20261127_kitty_graphics_15:
+          assessment_ref: kitty-retained-placement-closing-profile
+          verified_subset: Current selected RIS/ED3/ED2/ED22/DECSTR policy, bank-local clears, history tails, virtual text projection,
+            independent partial erasure, in-place margin clipping and horizontal straddler preservation.
+          residual: Top-anchored partial scroll with advancing history origin and vertical straddlers, exact ED2 row-only selection,
+            relative child expiry, alternate 1047/virtual-ref lifetime, horizontal column edit policy, full history/reflow and
+            physical integration remain explicit; prior selected ED3/RIS policies unchanged.
   kitty_clipboard:
     title: Kitty clipboard protocol (OSC 5522)
     author: Kovid Goyal / kitty
@@ -39445,4 +39783,353 @@ reconciliation:
     - kitty_graphics.unicode
     scope: Selected partial-text-erasure and vertical row-scroll rules for independent Kitty placements only; no change
       to non-Kitty policy, text command semantics, ED3, RIS or quota.
+- id: kitty-direct-data-closing-profile
+  status: resolved-by-scoped-source-review
+  decision_rule: originating-protocol-and-existing-selected-profile
+  operator_alignment: '2026-11-27: approved wave15 closing assessment of the selected Kitty graphics work; no new host-media
+    permission, no blanket parity mandate.'
+  accepted_interpretation:
+    effect: Target the existing direct APC G admission, RGB/RGBA, indexed 8/16, PNG, zlib, ordinary and feature query,
+      reply and chunk semantics under existing documented bounds. Preserve the selected independent transfer/recovery
+      owners; remaining source-defined subcases are open. Non-direct media, usage-hint choice and indexed animation prohibition
+      are separate.
+  selects:
+    kitty.graphics.closing.data: effect
+  reason: Bounded direct data, color and reply profile. Preserve pinned author meanings, earlier scoped decisions and
+    explicit residuals; assess only selected capability scope.
+  evidence_basis: Pinned author docs/graphics-protocol.rst at a79f376b85fd95e3dfd0589877123996bacd4184 SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+    source and named test inspection at eefb4bb0d2861a4e983850254ba92b978d53f472; wave01-14 scoped evidence retained;
+    wave15 direct wire tests and qualified workspace graph.
+  implementation_policy: targeted selected facet
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Bounded direct data, color and reply profile
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:commandWithAnchors
+    - howl-vt/src/graphics.zig:transmit
+    - howl-vt/src/png.zig:decode
+    - howl-vt/src/terminal.zig
+    tests:
+    - file: howl-vt/src/graphics.zig
+      test: RGB conversion quota cancellation and bank cleanup preserve exact ownership
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty PNG f=100 is chunked bounded and transactional through the graphics plane
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty zlib checksum failures preserve images and frames before valid recovery
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: indexed Kitty pixels follow canonical palette mutations without losing alpha or image identity'
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty bank-local transfer reply pressure preserves the unread screen switch
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: Kitty query action capability precedes DA1 without retained data'
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty graphics feature queries return exact advertised keys without changing the plane
+      relation: protocol-family
+    verified_subset: Direct format admission, indexed recoloring, bounded compression/chunks and ordered/pressure-safe
+      replies have named positive and negative proofs. See the per-clause closing review for exact coverage and residuals.
+    boundary: Direct VT admission and selected reply/source format subcases. Source-complete grammar, dedicated slot254,
+      feature defaults, all format/limit/negative combinations and physical color presentation not proved.
+    not_full_because: Direct VT admission and selected reply/source format subcases. Source-complete grammar, dedicated
+      slot254, feature defaults, all format/limit/negative combinations and physical color presentation not proved.
+  applies_to:
+    clauses:
+    - kitty_graphics.envelope
+    - kitty_graphics.rgb-rgba
+    - kitty_graphics.indexed-8
+    - kitty_graphics.indexed-16
+    - kitty_graphics.indexed-special
+    - kitty_graphics.png
+    - kitty_graphics.compressed
+    - kitty_graphics.query
+    - kitty_graphics.replies
+    - kitty_graphics.direct-chunks
+    - kitty_graphics.feature-query
+    scope: Target the existing direct APC G admission, RGB/RGBA, indexed 8/16, PNG, zlib, ordinary and feature query,
+      reply and chunk semantics under existing documented bounds. Preserve the selected independent transfer/recovery
+      owners; remaining source-defined subcases are open. Non-direct media, usage-hint choice and indexed animation prohibition
+      are separate.
+- id: kitty-retained-placement-closing-profile
+  status: resolved-by-scoped-source-review
+  decision_rule: originating-protocol-and-existing-selected-profile
+  operator_alignment: '2026-11-27: approved wave15 closing assessment of the selected Kitty graphics work; no new host-media
+    permission, no blanket parity mandate.'
+  accepted_interpretation:
+    effect: Target existing bank-local image/number and placement identity, source-defined layout, layer/cursor semantics,
+      virtual and relative projection, deletion and bounded resource ownership. Preserve existing selected RIS, ED3, partial
+      erase and row-margin decisions rather than restate or override those facets. The aspect-preserving two-axis layout
+      and remaining lifecycle cases are explicit backlog, not reinterpreted to fit current code.
+  selects:
+    kitty.graphics.closing.placement: effect
+  reason: Retained direct image placement, lifetime and quota profile. Preserve pinned author meanings, earlier scoped
+    decisions and explicit residuals; assess only selected capability scope.
+  evidence_basis: Pinned author docs/graphics-protocol.rst at a79f376b85fd95e3dfd0589877123996bacd4184 SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+    source and named test inspection at eefb4bb0d2861a4e983850254ba92b978d53f472; wave01-14 scoped evidence retained;
+    wave15 direct wire tests and qualified workspace graph.
+  implementation_policy: targeted selected facet
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Retained direct image placement, lifetime and quota profile
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:put
+    - howl-vt/src/graphics.zig:makePlacement
+    - howl-vt/src/graphics.zig:retirePlacementSet
+    - howl-vt/src/graphics.zig:reclaimForKittyAdmission
+    - howl-vt/src/terminal.zig:Images
+    - howl-vt/src/output/graphics.zig
+    tests:
+    - file: howl-vt/src/graphics.zig
+      test: Kitty client IDs and numbered images are bank local with global resource identities
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty physical ancestry keeps sixteen bounded parent links and rejects cycles transactionally
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty actual byte quota prefers unplaced data and retires oldest placed frames under pressure
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: direct output preserves Kitty source crop and destination pixel offsets
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: Kitty equal z order follows stable image identity after re-put and replacement
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty partial text erasures preserve physical placements and remove only erased placeholder projections
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty row scrolls keep horizontal margin crossing image stationary
+      relation: protocol-family
+    - file: howl-vt/test/output_owner.zig
+      test: eight visible Kitty images fail output admission while canonical state progresses
+      relation: protocol-family
+    verified_subset: Bank-local placement and number identity, ancestry, virtual projection, retirement, quota, crop,
+      cursor and layer behavior have named proofs. The per-clause closing review records remaining geometry and integration
+      differences.
+    boundary: Canonical VT and optional native output. Layout both-axis stretch, seven-resource visible output cap, history-advancing
+      margins, remaining geometry/selector/lifetime cases and physical presentation prevent FULL.
+    not_full_because: Canonical VT and optional native output. Layout both-axis stretch, seven-resource visible output
+      cap, history-advancing margins, remaining geometry/selector/lifetime cases and physical presentation prevent FULL.
+  applies_to:
+    clauses:
+    - kitty_graphics.put
+    - kitty_graphics.unicode
+    - kitty_graphics.relative
+    - kitty_graphics.delete
+    - kitty_graphics.quota
+    - kitty_graphics.image-number
+    - kitty_graphics.placement-identity
+    - kitty_graphics.placement-layout
+    - kitty_graphics.placement-z-order
+    - kitty_graphics.placement-cursor-policy
+    - kitty_graphics.delete-selectors
+    - kitty_graphics.terminal-interaction
+    scope: Target existing bank-local image/number and placement identity, source-defined layout, layer/cursor semantics,
+      virtual and relative projection, deletion and bounded resource ownership. Preserve existing selected RIS, ED3, partial
+      erase and row-margin decisions rather than restate or override those facets. The aspect-preserving two-axis layout
+      and remaining lifecycle cases are explicit backlog, not reinterpreted to fit current code.
+- id: kitty-animation-closing-profile
+  status: resolved-by-scoped-source-review
+  decision_rule: originating-protocol-and-existing-selected-profile
+  operator_alignment: '2026-11-27: approved wave15 closing assessment of the selected Kitty graphics work; no new host-media
+    permission, no blanket parity mandate.'
+  accepted_interpretation:
+    effect: Target direct frame data, animation controls and frame composition of non-indexed images using the canonical
+      frame owner and caller-monotonic live-viewport clock. Keep existing storage bounds and selected policies; PNG frame
+      and remaining timing/geometry cases are not silently accepted as complete.
+  selects:
+    kitty.graphics.closing.animation: effect
+  reason: Bounded direct animation-frame and composition profile. Preserve pinned author meanings, earlier scoped decisions
+    and explicit residuals; assess only selected capability scope.
+  evidence_basis: Pinned author docs/graphics-protocol.rst at a79f376b85fd95e3dfd0589877123996bacd4184 SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+    source and named test inspection at eefb4bb0d2861a4e983850254ba92b978d53f472; wave01-14 scoped evidence retained;
+    wave15 direct wire tests and qualified workspace graph.
+  implementation_policy: targeted selected facet
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Bounded direct animation-frame and composition profile
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:frame
+    - howl-vt/src/graphics.zig:finishFrame
+    - howl-vt/src/graphics.zig:animate
+    - howl-vt/src/graphics.zig:composeFrames
+    - howl-vt/src/terminal.zig:serviceAnimations
+    tests:
+    - file: howl-vt/src/graphics.zig
+      test: Kitty frame loading preserves edits background bases and action-specific composition
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty composition owns root and nonoverlapping same-frame edits
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty frame capacity rejects the next frame without retained mutation
+      relation: protocol-family
+    - file: howl-vt/src/terminal.zig
+      test: Kitty animation service excludes inactive screen bank and keeps elapsed resume semantics
+      relation: protocol-family
+    - file: howl-vt/src/terminal.zig
+      test: Kitty live animation visibility retains clipped history tails but ignores fully historical images
+      relation: protocol-family
+    verified_subset: Selected frame admission, composition, loop/gap and live-viewport service behavior demonstrated.
+      Per-clause evidence retains exact limits.
+    boundary: Selected direct frame/clock semantics; PNG frame input, all defaults/errors/timing transitions, selected
+      history-view/host-window animation and physical presentation remain open.
+    not_full_because: Selected direct frame/clock semantics; PNG frame input, all defaults/errors/timing transitions,
+      selected history-view/host-window animation and physical presentation remain open.
+  applies_to:
+    clauses:
+    - kitty_graphics.frame-load
+    - kitty_graphics.animation
+    - kitty_graphics.composition
+    scope: Target direct frame data, animation controls and frame composition of non-indexed images using the canonical
+      frame owner and caller-monotonic live-viewport clock. Keep existing storage bounds and selected policies; PNG frame
+      and remaining timing/geometry cases are not silently accepted as complete.
+- id: kitty-indexed-animation-restriction
+  status: resolved-by-scoped-source-review
+  decision_rule: originating-protocol-and-existing-selected-profile
+  operator_alignment: '2026-11-27: approved wave15 closing assessment of the selected Kitty graphics work; no new host-media
+    permission, no blanket parity mandate.'
+  accepted_interpretation:
+    effect: Select the source-defined prohibition on animation/frame composition of indexed images. For valid addressed
+      complete direct APC commands resolving a retained f=8 or f=16 image in its bank, a=f/a=a/a=c reject with EINVAL
+      and existing identity/quiet semantics before frame allocation or retained mutation. Replacement with a non-indexed
+      image restores ordinary frame eligibility.
+  selects:
+    kitty.graphics.closing.restriction: effect
+  reason: Indexed-image animation prohibition. Preserve pinned author meanings, earlier scoped decisions and explicit
+    residuals; assess only selected capability scope.
+  evidence_basis: Pinned author docs/graphics-protocol.rst at a79f376b85fd95e3dfd0589877123996bacd4184 SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+    source and named test inspection at eefb4bb0d2861a4e983850254ba92b978d53f472; wave01-14 scoped evidence retained;
+    wave15 direct wire tests and qualified workspace graph.
+  implementation_policy: targeted selected facet
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Indexed-image animation prohibition
+    intent: target
+    status: FULL
+    owners:
+    - howl-vt/src/graphics.zig:frame
+    - howl-vt/src/graphics.zig:animate
+    - howl-vt/src/graphics.zig:composeFrames
+    - howl-vt/src/graphics.zig:ReplyIdentity
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty indexed animation restriction rejects both formats under every quiet mode and split
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: 'terminal: indexed Kitty zlib, query, stack restore and forbidden animation preserve owned bytes'
+      relation: protocol-family
+    verified_subset: Source prohibition implemented by shared indexed-source guards in frame, animate and composeFrames
+      before frame allocation or mutation. New wire matrix covers f=8/16, primary/alternate, i/I, root/new frame, start/select,
+      compose, q=0/1/2, every two-fragment split, exact errors and unchanged retained identity/pixels/geometry; no wake
+      deadline and valid RGBA retransmission positive control.
+    boundary: FULL only for the selected indexed-image prohibition on valid addressed direct standard 7-bit APC commands
+      after image resolution, not the full indexed formats, animation, general malformed framing, reply-pressure or host
+      media contract. Guard precedes allocation/mutation; wire every-split matrix and successful RGBA recovery.
+  applies_to:
+    clauses:
+    - kitty_graphics.no-indexed-animation
+    scope: Select the source-defined prohibition on animation/frame composition of indexed images. For valid addressed
+      complete direct APC commands resolving a retained f=8 or f=16 image in its bank, a=f/a=a/a=c reject with EINVAL
+      and existing identity/quiet semantics before frame allocation or retained mutation. Replacement with a non-indexed
+      image restores ordinary frame eligibility.
+- id: kitty-advisory-usage-hints
+  status: resolved-by-scoped-source-review
+  decision_rule: originating-protocol-and-existing-selected-profile
+  operator_alignment: '2026-11-27: approved wave15 closing assessment of the selected Kitty graphics work; no new host-media
+    permission, no blanket parity mandate.'
+  accepted_interpretation:
+    effect: Accept the author-permitted option to ignore N=1 caching/eviction hints rather than add retained transient
+      metadata or disk cache. Existing bounded u32 grammar and no-op placement semantics remain; no new performance or
+      hint-propagation guarantee.
+  selects:
+    kitty.graphics.closing.hint: effect
+  reason: Advisory usage-hint ignore policy. Preserve pinned author meanings, earlier scoped decisions and explicit residuals;
+    assess only selected capability scope.
+  evidence_basis: Pinned author docs/graphics-protocol.rst at a79f376b85fd95e3dfd0589877123996bacd4184 SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+    source and named test inspection at eefb4bb0d2861a4e983850254ba92b978d53f472; wave01-14 scoped evidence retained;
+    wave15 direct wire tests and qualified workspace graph.
+  implementation_policy: targeted selected facet
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Advisory usage-hint ignore policy
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:parseCommand
+    - howl-vt/src/graphics.zig:formatFeatureQuery
+    tests:
+    - file: howl-vt/src/graphics.zig
+      test: Kitty usage hints are bounded advisory no-op metadata
+      relation: protocol-family
+    - file: howl-vt/src/graphics.zig
+      test: Kitty graphics feature queries return exact advertised keys without changing the plane
+      relation: protocol-family
+    verified_subset: N parsed as bounded u32 bitmask; N=1 accepted in direct static/frame commands, parser rejects overflow/duplicate,
+      no retained hint/caching state, feature echo for supported N=1. Source explicitly permits ignoring the hint.
+    boundary: Permitted ignore choice implemented; exhaustive wire/default/placement/compose and unknown-bit interaction
+      proof not supplied. Ignoring the hint is not an obligation to implement a cache.
+    not_full_because: Permitted ignore choice implemented; exhaustive wire/default/placement/compose and unknown-bit interaction
+      proof not supplied. Ignoring the hint is not an obligation to implement a cache.
+  applies_to:
+    clauses:
+    - kitty_graphics.usage-hints
+    scope: Accept the author-permitted option to ignore N=1 caching/eviction hints rather than add retained transient
+      metadata or disk cache. Existing bounded u32 grammar and no-op placement semantics remain; no new performance or
+      hint-propagation guarantee.
+- id: kitty-local-media-boundary
+  status: resolved-by-scoped-source-review
+  decision_rule: originating-protocol-and-existing-selected-profile
+  operator_alignment: '2026-11-27: approved wave15 closing assessment of the selected Kitty graphics work; no new host-media
+    permission, no blanket parity mandate.'
+  accepted_interpretation:
+    effect: Direct t=d/default is the selected graphics transport. Retain existing refusal of unselected t=f/t/s media;
+      do not grant filesystem access, unlink or shared-memory mapping from VT. Non-direct host transport and its mandatory
+      privacy contract are deferred pending separate host-owner design and explicit permission decision.
+  selects:
+    kitty.graphics.closing.media: effect
+  reason: Direct-only graphics medium and deferred host access boundary. Preserve pinned author meanings, earlier scoped
+    decisions and explicit residuals; assess only selected capability scope.
+  evidence_basis: Pinned author docs/graphics-protocol.rst at a79f376b85fd95e3dfd0589877123996bacd4184 SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+    source and named test inspection at eefb4bb0d2861a4e983850254ba92b978d53f472; wave01-14 scoped evidence retained;
+    wave15 direct wire tests and qualified workspace graph.
+  implementation_policy: targeted direct profile; non-direct host media deferred
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Direct-only graphics medium and deferred host access boundary
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/graphics.zig:commandWithAnchors
+    - howl-vt/src/graphics.zig:formatFeatureQuery
+    tests:
+    - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+      test: Kitty unsupported host media are uniformly refused without retained mutation
+      relation: protocol-family
+    verified_subset: Direct t=d/default implemented. Valid addressed ordinary t=f/t/s requests for a=t/T/q return ENOTSUP
+      (or q=2 silence), leave retained images/placements unchanged, emit no host consequence; feature queries omit those
+      media.
+    boundary: 'The medium clause is PARTIAL across author media: direct implemented, non-direct absent and deferred. The
+      file-read privacy clause is a conditional unimplemented contract, not FULL merely because current access is refused.
+      No host permission or permanent exclusion inferred.'
+    not_full_because: 'The medium clause is PARTIAL across author media: direct implemented, non-direct absent and deferred.
+      The file-read privacy clause is a conditional unimplemented contract, not FULL merely because current access is
+      refused. No host permission or permanent exclusion inferred.'
+  applies_to:
+    clauses:
+    - kitty_graphics.mediums
+    - kitty_graphics.file-read-privacy
+    scope: Direct t=d/default is the selected graphics transport. Retain existing refusal of unselected t=f/t/s media;
+      do not grant filesystem access, unlink or shared-memory mapping from VT. Non-direct host transport and its mandatory
+      privacy contract are deferred pending separate host-owner design and explicit permission decision.
 pending_reconciliation: []
