@@ -12561,6 +12561,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: selected clipboard broker refuses malformed replacement and retires the prior grant
         relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: selected clipboard worker observes PTY hangup while consent blocks further reads
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard owner deadline survives expired main queries and unrelated worker turns
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
@@ -12604,6 +12613,17 @@ specifications:
             write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
             in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
           baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
+        howl_qualification_20261127_kitty_clipboard_04b:
+          scope: Selected broker now connects to the real terminal worker and main-thread App service. Worker wakes main on changed
+            copied prompt/prepared notices; main wakes selected workers through existing eventfd after consent, focus changes
+            or recorded provider result. No renderer-dependent provider progress. Exact pending head preserves ordered child replies,
+            and PTY hangup retires selected staging. Default application has no selected provider; no actual desktop clipboard
+            grant.
+          method: Operator approved continuation of host write broker ca62894 with selected live worker/main scheduling and consent.
+            Prior host-boundary review and pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
+            deterministic deadline interleaving proof; no actual desktop clipboard provider.
+          baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12707,6 +12727,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: selected clipboard broker refuses malformed replacement and retires the prior grant
         relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: selected clipboard worker observes PTY hangup while consent blocks further reads
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard owner deadline survives expired main queries and unrelated worker turns
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Current application declines selected valid write starts with EPERM and structurally unambiguous writes with
@@ -12741,6 +12770,17 @@ specifications:
             write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
             in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
           baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
+        howl_qualification_20261127_kitty_clipboard_04b:
+          scope: Selected ordinary write uses a rendered Allow once/Deny prompt tied to exact occurrence/reset/start ticket; only
+            fresh left press/release in the same painted control and window may approve. Unseen prompt, pre-display timestamp,
+            wrong window, stale ticket and focus change reject. Actual child observes synthetic provider DONE followed by later
+            DSR; focus loss between press/release gives EPERM then later DSR. PTY hangup cancels a blocked consent without waiting
+            for the normal deadline. No real OS clipboard write or provider adoption claim.
+          method: Operator approved continuation of host write broker ca62894 with selected live worker/main scheduling and consent.
+            Prior host-boundary review and pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
+            deterministic deadline interleaving proof; no actual desktop clipboard provider.
+          baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
     - id: password
       section: Avoiding repeated permission prompts
       level: defined
@@ -12755,6 +12795,12 @@ specifications:
         relation: protocol-family
       - file: howl-app/src/clipboard_broker.zig
         test: clipboard broker expires pending and prepared writes before provider admission
+        relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard owner deadline survives expired main queries and unrelated worker turns
         relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
@@ -12775,6 +12821,15 @@ specifications:
             write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
             in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
           baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
+        howl_qualification_20261127_kitty_clipboard_04b:
+          scope: Consent is host-owned, uses trusted tab/pane routing and exact broker ticket, not app-supplied name/password.
+            Pointer-only affirmative control after presentation; no keyboard acceptance, persistent trust or password authorization.
+            Read-only expired prompt/decision queries cannot remove owner deadline; owner worker retires expired request.
+          method: Operator approved continuation of host write broker ca62894 with selected live worker/main scheduling and consent.
+            Prior host-boundary review and pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
+            deterministic deadline interleaving proof; no actual desktop clipboard provider.
+          baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
     - id: paste-events
       section: Allowing terminal applications to respond to paste events
       level: defined
@@ -12873,6 +12928,12 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: selected clipboard broker refuses malformed replacement and retires the prior grant
         relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: selected clipboard worker observes PTY hangup while consent blocks further reads
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected read/write denial replies echo only allowed ASCII id characters, omit id when sanitized empty, use bounded
@@ -12909,6 +12970,15 @@ specifications:
             write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
             in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
           baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
+        howl_qualification_20261127_kitty_clipboard_04b:
+          scope: Actual child receives the routed original write identifier and correct success/refusal response before later
+            device-status reply. Focus or transport retirement cannot reassign the pending grant to another request. This remains
+            one selected process-wide write transaction, not multiplexed concurrent grants.
+          method: Operator approved continuation of host write broker ca62894 with selected live worker/main scheduling and consent.
+            Prior host-boundary review and pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
+            deterministic deadline interleaving proof; no actual desktop clipboard provider.
+          baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
     - id: mime-alias
       section: docs/clipboard.rst:162-173
       level: defined
@@ -13130,6 +13200,15 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: selected clipboard broker refuses malformed replacement and retires the prior grant
         relation: protocol-family
+      - file: howl-app/src/main.zig
+        test: selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O
+        relation: protocol-family
+      - file: howl-app/src/terminal.zig
+        test: selected clipboard worker observes PTY hangup while consent blocks further reads
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard owner deadline survives expired main queries and unrelated worker turns
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: No active write is admitted by this profile; continuations, aliases and end are ignored after denial. No multipart
@@ -13161,6 +13240,17 @@ specifications:
             write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
             in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
           baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
+        howl_qualification_20261127_kitty_clipboard_04b:
+          scope: Selected worker/main handoff retains the actual prepared owned data and aliased binary payload until main synthetic
+            provider admission; worker alone acknowledges exact recorded outcome. Poll includes PTY hangup while child input is
+            blocked; abandon staging before slot retirement on child/transport/worker stop. Per-owner deadline survives sibling
+            turns and expired main queries, without arming sibling polling. No live 64MiB end-to-end provider or physical compositor
+            proof.
+          method: Operator approved continuation of host write broker ca62894 with selected live worker/main scheduling and consent.
+            Prior host-boundary review and pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
+            deterministic deadline interleaving proof; no actual desktop clipboard provider.
+          baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
     - id: paste-password
       section: docs/clipboard.rst:200-221,264-266
       level: defined
@@ -42314,15 +42404,15 @@ reconciliation:
       relation: protocol-family
     verified_subset: Single-use prepared ownership move before DONE; synthetic binary/alias identity; exact recorded outcome
       with full reply queue and retry; focus/primary/background/busy refusals; stale consent, denial, prompt and prepared
-      expiry; reset service and retired provider result; selected consequence drain preserves OSC52 and idle waiting;
-      malformed replacement retires grant.
-    boundary: Synthetic selected write service only; not installed or wired to live worker/main scheduler or consent dialog.
-      Reset epoch checked at worker service; actual scheduler must order lifecycle and provider admission, wake affected
-      workers and deadlines. No actual SDL clipboard calls, provider failure/adoption or cross-thread lifetime/latency
-      qualification. No ordinary data reads, positive inventory provider, primary MIME, tokens, native C helper or positive
-      mode5522 advertisement. Shared slot limits staging, not total retained OS clipboard bytes.
-    not_full_because: Write-only broker and owned handoff qualified without actual desktop provider, live consent and
-      worker integration; complete underlying clipboard/paste exchange remains missing.
+      expiry; reset service and retired provider result; selected consequence drain preserves OSC52 and idle waiting; malformed
+      replacement retires grant.
+    boundary: Selected synthetic write broker; selected real worker/main scheduler and pointer consent are separately assessed
+      by kitty-clipboard-selected-host-lifecycle. Default app provider remains absent and installed runtime unchanged. No
+      actual SDL clipboard calls, provider adoption/failure semantics, complete cross-thread stress, ordinary data reads,
+      positive inventory provider, primary MIME, tokens, native C helper or positive mode5522 advertisement. Shared slot
+      limits staging, not total retained OS clipboard bytes.
+    not_full_because: Write-only broker and owned handoff qualified without actual desktop provider, live consent and worker
+      integration; complete underlying clipboard/paste exchange remains missing.
   applies_to:
     clauses:
     - kitty_clipboard.envelope
@@ -42333,4 +42423,77 @@ reconciliation:
     - kitty_clipboard.password
     scope: Selected host write policy and synthetic transaction handoff; no actual OS clipboard permission or positive
       capability grant.
+- id: kitty-clipboard-selected-host-lifecycle
+  status: resolved-by-scoped-source-selection
+  decision_rule: exact-host-owner-wakeup-and-consent-before-publication
+  operator_alignment: '2026-11-27: operator approved continuation into live worker/main scheduling and consent using synthetic
+    provider first. Retain earlier host permission and one-slot policies; do not enable native SDL publication until separately
+    qualified.'
+  accepted_interpretation:
+    effect: An explicitly selected App host supplies one shared broker and main-thread publication callback to its terminal
+      workers. Default app selects neither provider nor broker and continues refusal. Copy immutable occurrence identity
+      before thread start. Worker services existing consequence FIFO with selected broker, emits changed prompt/prepared
+      notices on existing SDL wake event and schedules its own broker deadline in poll; main reconciles actual focus/visibility/lifetime,
+      wakes workers via existing eventfd after decisions or provider outcome and calls provider on main service before
+      drawing, not from a renderer callback. Only pointer press and release on the same exact successfully displayed consent,
+      after display timestamp in its actual window, can authorize once. Retire held input before modal; too-small/unavailable
+      prompt fails closed. No keyboard affirmation or app-provided name/password authority. Focus/lifetime loss revokes
+      pending before handoff, and transport hangup observed even if host head blocks reads; worker drops staging before
+      freeing shared slot. Only owner worker expires deadline; main expired query/decision/admission return unavailable
+      without removing deadline, and unrelated workers cannot expire it. Provider admission remains irreversible boundary;
+      already admitted provider result not falsified by later lifecycle event. No actual OS access or positive paste advertisement.
+  selects:
+    kitty.clipboard.selected-host-lifecycle: effect
+  reason: The previously qualified synthetic broker requires actual eventfd and main-thread event routing to avoid lost
+    consent/deadline wakes and render dependence. Exact visible pointer gesture and occurrence binding prevent stale input
+    authorizing a successor. PTY hangup remains observable while input is blocked on host work. Source-backed write success
+    and permission policy unchanged; local UI and scheduling choices selected within approved scope.
+  evidence_basis: Operator approved continuation of host write broker ca62894 with selected live worker/main scheduling
+    and consent. Prior host-boundary review and pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256
+    a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9 lines104-198. Actual PTY worker and SDL dummy/software-renderer
+    event/consent proof with synthetic publication callback; deterministic deadline interleaving proof; no actual desktop
+    clipboard provider.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected actual PTY worker and main-thread consent/provider scheduling with synthetic data
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-app/src/terminal.zig:Terminal
+    - howl-app/src/terminal.zig:State
+    - howl-app/src/main.zig:App
+    - howl-app/src/clipboard_broker.zig:Broker
+    - howl-vt/src/terminal.zig:abandonKittyClipboardWrite
+    tests:
+    - file: howl-app/src/main.zig
+      test: selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O
+      relation: protocol-family
+    - file: howl-app/src/terminal.zig
+      test: selected clipboard worker observes PTY hangup while consent blocks further reads
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard owner deadline survives expired main queries and unrelated worker turns
+      relation: protocol-family
+    verified_subset: Actual worker wake events and eventfd decision/outcome, SDL dummy software-rendered consent, unseen/pre-display/wrong-window/stale-ticket
+      rejection, fresh exact click, synthetic binary alias provider, ordered child DONE then DSR and focus-loss EPERM
+      then DSR. Actual PTY hangup while awaiting consent retires slot before normal deadline. Deterministic owner deadline
+      survives expired main queries and sibling turns.
+    boundary: Explicitly selected test host with real PTY/worker and main-thread functions, SDL dummy/software renderer,
+      synthetic provider only. Default app provider remains absent; no real SDL clipboard access, physical/private compositor
+      prompt, full event-loop race stress, actual 30-second timeout duration witness or native callback adoption/failure
+      qualification. Reset observed by broker on worker service, HUP/exit/stop revokes before slot release; a provider
+      already admitted cannot be undone by later observed death. Existing 100ms status allocation retry may defer consequence
+      servicing, but provider deadline admission rejects expired grants. No ordinary positive data/list provider, primary
+      MIME, token, C helper or positive mode5522.
+    not_full_because: Selected worker/main write and consent path is qualified with synthetic provider; actual native
+      publication, bounded reads and full clipboard/paste contract remain incomplete.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.write
+    - kitty_clipboard.password
+    - kitty_clipboard.mux-id
+    - kitty_clipboard.write-data
+    scope: Selected host write lifecycle and consent scheduling; no actual clipboard access or capability advertisement.
 pending_reconciliation: []

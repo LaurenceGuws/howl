@@ -19,6 +19,7 @@ const config = @import("config.zig");
 const widgets = @import("widgets.zig");
 const tab_title = @import("tab_title.zig");
 const host_status = @import("program_status.zig");
+const clipboard_broker = @import("clipboard_broker.zig");
 const status_toast = @import("status_toast.zig");
 const settings = @import("settings.zig");
 const pages = @import("settings_pages.zig");
@@ -186,6 +187,27 @@ const HeaderCache = struct {
         self.* = .{};
     }
 };
+// Main owns this optional provider selection. The normal application does
+// not select one until native clipboard adoption has been qualified.
+const ClipboardHost = struct {
+    broker: *clipboard_broker.Broker,
+    // Provider may move the allocation out of data; otherwise the caller
+    // retires it after the synchronous call. Never receives a mutable VT.
+    publish: *const fn (*vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus,
+};
+const ClipboardButtons = struct {
+    allow: layout.Rect,
+    deny: layout.Rect,
+};
+const ClipboardConsent = struct {
+    ticket: clipboard_broker.Ticket,
+    buttons: ClipboardButtons,
+};
+const ClipboardPress = struct {
+    consent: ClipboardConsent,
+    allow: bool,
+};
+
 /// Direct SDL host for terminal panes, Settings state and desktop lifecycle.
 pub const App = struct {
     init: std.process.Init,
@@ -230,6 +252,12 @@ pub const App = struct {
     cursor_deadline: ?u64 = null,
     consume_left_release: bool = false,
     focused: bool = false,
+    clipboard_host: ?ClipboardHost = null,
+    clipboard_input_prompt: ?clipboard_broker.Ticket = null,
+    clipboard_displayed: ?ClipboardConsent = null,
+    clipboard_displayed_ns: u64 = 0,
+    clipboard_press: ?ClipboardPress = null,
+    clipboard_consume_release: bool = false,
     running: bool = true,
     width: f32 = 1000,
     height: f32 = 650,
@@ -380,7 +408,7 @@ pub const App = struct {
         const pixels: u16 = @intFromFloat(@round(@as(f32, @floatFromInt(font_size)) * self.scale));
         const presentation = try self.presentationConfig(self.fonts, pixels, self.configuration.value.cursor_stroke_pixels);
         errdefer self.fonts.collect();
-        return terminal.Terminal.create(allocator, self.init.io, inherited, .{
+        return terminal.Terminal.createSelected(allocator, self.init.io, inherited, .{
             .shell = if (recipe.shell.len != 0) recipe.shell else self.init.environ_map.get("SHELL") orelse "/bin/sh",
             .command = if (recipe.command.len != 0) recipe.command else null,
             .arguments = recipe.arguments,
@@ -389,7 +417,7 @@ pub const App = struct {
             .cursor_style = self.configuration.value.cursor_shape.style(),
             .rows = 37,
             .columns = 80,
-        }, presentation, self.wake_event, false);
+        }, presentation, self.wake_event, false, if (self.clipboard_host) |host| host.broker else null);
     }
     fn createPane(self: *App, supplied: config.Profile, font_size: ?u16) !*Pane {
         const result = try allocator.create(Pane);
@@ -431,6 +459,7 @@ pub const App = struct {
         if (!c.SDL_ClearComposition(self.window)) self.report(error.SDLComposition);
     }
     fn loseKeyboard(self: *App) !void {
+        self.setClipboardFocus(null);
         self.cursor_deadline = null;
         if (self.tab_count != 0) {
             self.pane().blink.reset();
@@ -448,6 +477,7 @@ pub const App = struct {
         if (status.failure == null and !status.closed) try owner.submit(.{ .input = .{ .focus = .out } });
     }
     fn gainKeyboard(self: *App) !void {
+        self.syncClipboardFocus();
         self.cancelComposition();
         if (self.tab_count == 0 or !self.focused or (self.rename_editor != null or self.palette != null or self.settings_editor != null or self.pane().finder != null)) return;
         const owner = self.pane().owner orelse return;
@@ -460,6 +490,7 @@ pub const App = struct {
     }
 
     fn syncVisible(self: *App) void {
+        self.syncClipboardFocus();
         self.visibility_retry_pending = false;
         for (self.tabs[0..self.tab_count], 0..) |maybe, index| {
             const t = maybe.?;
@@ -1465,6 +1496,20 @@ pub const App = struct {
         return !unchanged;
     }
     fn event(self: *App, value: c.SDL_Event) !void {
+        switch (value.type) {
+            c.SDL_EVENT_WINDOW_FOCUS_LOST,
+            c.SDL_EVENT_WINDOW_HIDDEN,
+            c.SDL_EVENT_WINDOW_MINIMIZED,
+            c.SDL_EVENT_QUIT,
+            c.SDL_EVENT_WINDOW_CLOSE_REQUESTED,
+            => self.setClipboardFocus(null),
+            c.SDL_EVENT_WINDOW_RESIZED, c.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
+                self.clipboard_displayed = null;
+                self.clipboard_press = null;
+            },
+            else => {},
+        }
+        if (self.clipboardEvent(value)) return;
         // These events can submit terminal input or change its owner. Retire
         // earlier key intent first, but allow unrelated worker/render wakes
         // between a key-down and its immediate SDL text event.
@@ -1774,6 +1819,187 @@ pub const App = struct {
         self.cancelComposition();
         try p.submit(.{ .input = .{ .paste = bytes } });
     }
+    fn clipboardNow(self: *const App) u64 {
+        return @intCast(std.Io.Clock.awake.now(self.init.io).toNanoseconds());
+    }
+
+    // Main owns pane lifetimes. Waking existing descriptors never exposes
+    // a worker's canonical VT or retains a pointer beyond this turn.
+    fn wakeClipboardWorkers(self: *App) void {
+        for (self.tabs[0..self.tab_count]) |maybe| {
+            for (maybe.?.panes) |pane_value| {
+                if (pane_value) |p| if (p.owner) |owner| owner.wakeClipboard();
+            }
+        }
+    }
+
+    fn setClipboardFocus(self: *App, owner: ?u64) void {
+        const host = self.clipboard_host orelse return;
+        if (host.broker.focusedOwner() == owner) return;
+        host.broker.setFocus(owner, self.clipboardNow());
+        self.clipboard_input_prompt = null;
+        self.clipboard_displayed = null;
+        self.clipboard_press = null;
+        self.wakeClipboardWorkers();
+    }
+
+    fn syncClipboardFocus(self: *App) void {
+        if (self.clipboard_host == null) return;
+        const owner: ?u64 = blk: {
+            if (!self.running or !self.focused or self.window_visibility != 0 or self.tab_count == 0 or
+                self.rename_editor != null or self.palette != null or self.settings_editor != null or
+                self.chooser != null or self.pane().finder != null) break :blk null;
+            const worker = self.pane().owner orelse break :blk null;
+            const status = worker.snapshot();
+            if (status.closed or status.child_exit != null or status.failure != null) break :blk null;
+            break :blk worker.occurrenceIdentity();
+        };
+        self.setClipboardFocus(owner);
+    }
+
+    // A host service turn runs before any frame draw, including when the
+    // renderer has no new content. The provider call is main-thread only.
+    fn clipboardTurn(self: *App) void {
+        const host = self.clipboard_host orelse return;
+        self.syncClipboardFocus();
+        const owner = host.broker.focusedOwner() orelse return;
+        const notice = host.broker.noticeFor(owner) orelse {
+            self.clipboard_input_prompt = null;
+            self.clipboard_displayed = null;
+            self.clipboard_press = null;
+            return;
+        };
+        if (notice == .prompt and !std.meta.eql(self.clipboard_input_prompt, @as(?clipboard_broker.Ticket, notice.prompt.ticket))) {
+            self.clipboard_input_prompt = notice.prompt.ticket;
+            // Retire held keyboard/pointer input before the modal captures
+            // releases. If the existing input lane cannot safely yield,
+            // refuse the prompt rather than leave an affirmative control.
+            self.cancelDrag();
+            self.cancelComposition();
+            self.finishPointer() catch |failure| {
+                self.report(failure);
+                if (host.broker.decide(notice.prompt.ticket, false, self.clipboardNow())) self.wakeClipboardWorkers();
+                return;
+            };
+            self.keyboard.releaseTerminal() catch |failure| {
+                self.report(failure);
+                if (host.broker.decide(notice.prompt.ticket, false, self.clipboardNow())) self.wakeClipboardWorkers();
+                return;
+            };
+        }
+        if (notice == .prepared) {
+            self.clipboard_input_prompt = null;
+            var publication = host.broker.takePublication(notice.prepared, self.clipboardNow()) orelse return;
+            defer publication.data.deinit();
+            const status = host.publish(&publication.data);
+            const recorded = host.broker.recordOutcome(publication.completion, status);
+            std.debug.assert(recorded);
+            self.wakeClipboardWorkers();
+        }
+    }
+
+    fn clipboardBox(self: *const App) layout.Rect {
+        const width = @max(1, @min(460, self.width - 24));
+        const height = @max(1, @min(164, self.height - 24));
+        return .{ .x = (self.width - width) / 2, .y = (self.height - height) / 2, .width = width, .height = height };
+    }
+
+    fn clipboardButtons(box: layout.Rect) ClipboardButtons {
+        const width = @max(1, (box.width - 42) / 2);
+        const y = box.y + box.height - 46;
+        return .{
+            .allow = .{ .x = box.x + 14, .y = y, .width = width, .height = 32 },
+            .deny = .{ .x = box.x + 28 + width, .y = y, .width = width, .height = 32 },
+        };
+    }
+
+    // Only a fresh press/release on a successfully painted exact prompt can
+    // authorize data. No app title, password, Enter key or stale click does.
+    fn clipboardEvent(self: *App, value: c.SDL_Event) bool {
+        const host = self.clipboard_host orelse return false;
+        if (value.type == c.SDL_EVENT_MOUSE_BUTTON_UP and value.button.button == c.SDL_BUTTON_LEFT and self.clipboard_consume_release) {
+            self.clipboard_consume_release = false;
+            const pressed = self.clipboard_press orelse return true;
+            self.clipboard_press = null;
+            const shown = self.clipboard_displayed orelse return true;
+            if (!std.meta.eql(shown, pressed.consent) or
+                value.button.windowID != c.SDL_GetWindowID(self.window) or
+                value.button.timestamp < self.clipboard_displayed_ns) return true;
+            const rect = if (pressed.allow) shown.buttons.allow else shown.buttons.deny;
+            if (!rect.contains(value.button.x, value.button.y)) return true;
+            self.syncClipboardFocus();
+            if (host.broker.decide(shown.ticket, pressed.allow, self.clipboardNow())) {
+                self.clipboard_displayed = null;
+                self.wakeClipboardWorkers();
+            }
+            return true;
+        }
+        const prompt_value = host.broker.prompt(self.clipboardNow()) orelse {
+            if (value.type == c.SDL_EVENT_MOUSE_BUTTON_DOWN and value.button.button == c.SDL_BUTTON_LEFT) {
+                self.clipboard_consume_release = false;
+                self.clipboard_press = null;
+            }
+            return false;
+        };
+        switch (value.type) {
+            c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                if (value.button.button != c.SDL_BUTTON_LEFT) return true;
+                self.clipboard_consume_release = true;
+                self.clipboard_press = null;
+                const shown = self.clipboard_displayed orelse return true;
+                if (!std.meta.eql(shown.ticket, prompt_value.ticket) or
+                    value.button.windowID != c.SDL_GetWindowID(self.window) or
+                    value.button.timestamp < self.clipboard_displayed_ns) return true;
+                if (shown.buttons.allow.contains(value.button.x, value.button.y)) {
+                    self.clipboard_press = .{ .consent = shown, .allow = true };
+                } else if (shown.buttons.deny.contains(value.button.x, value.button.y)) {
+                    self.clipboard_press = .{ .consent = shown, .allow = false };
+                }
+                return true;
+            },
+            c.SDL_EVENT_KEY_DOWN,
+            c.SDL_EVENT_KEY_UP,
+            c.SDL_EVENT_TEXT_INPUT,
+            c.SDL_EVENT_TEXT_EDITING,
+            c.SDL_EVENT_MOUSE_BUTTON_UP,
+            c.SDL_EVENT_MOUSE_MOTION,
+            c.SDL_EVENT_MOUSE_WHEEL,
+            c.SDL_EVENT_DROP_FILE,
+            c.SDL_EVENT_DROP_TEXT,
+            => return true,
+            else => return false,
+        }
+    }
+
+    fn drawClipboardConsent(self: *App) !?ClipboardConsent {
+        const host = self.clipboard_host orelse return null;
+        const prompt_value = host.broker.prompt(self.clipboardNow()) orelse return null;
+        // No invisible or too-small affirmative control.
+        if (self.width < 300 or self.height < 188 or self.tab_count == 0) {
+            if (host.broker.decide(prompt_value.ticket, false, self.clipboardNow())) self.wakeClipboardWorkers();
+            return null;
+        }
+        const box = self.clipboardBox();
+        const buttons = clipboardButtons(box);
+        const colors = try self.uiPalette();
+        try fill(self.renderer, box, colors.title);
+        try outline(self.renderer, box, colors.border);
+        const inner = box.x + 14;
+        const line_width = box.width - 28;
+        try self.clippedText("Allow one clipboard write?", .{ .x = inner, .y = box.y + 8, .width = line_width, .height = 25 }, inner);
+        var identity: [96]u8 = undefined;
+        const label = try std.fmt.bufPrint(&identity, "Tab {d}, pane {d} · ordinary clipboard", .{ self.active + 1, self.tab().tree.active + 1 });
+        try self.clippedTextColor(label, .{ .x = inner, .y = box.y + 38, .width = line_width, .height = 24 }, inner, colors.muted);
+        try self.clippedTextColor("This terminal may replace the clipboard once.", .{ .x = inner, .y = box.y + 65, .width = line_width, .height = 24 }, inner, colors.text);
+        try fill(self.renderer, buttons.allow, colors.active);
+        try outline(self.renderer, buttons.allow, colors.border);
+        try self.clippedText("Allow once", buttons.allow, buttons.allow.x + 10);
+        try fill(self.renderer, buttons.deny, colors.idle);
+        try outline(self.renderer, buttons.deny, colors.accent);
+        try self.clippedText("Deny", buttons.deny, buttons.deny.x + 10);
+        return .{ .ticket = prompt_value.ticket, .buttons = buttons };
+    }
+
     fn desktopHost(self: *App) !void {
         var attention = false;
         for (self.tabs[0..self.tab_count]) |t| for (t.?.panes) |p| if (p) |value| if (value.owner) |owner| {
@@ -2521,7 +2747,11 @@ pub const App = struct {
         if (self.chooser != null) try self.drawChooser();
         if (self.rename_editor) |*editor| try self.drawField(try self.renameField(), &editor.edit, editor.bytes[0..editor.len], "Automatic title", true);
         try self.drawComposition();
+        const consent = try self.drawClipboardConsent();
         if (!c.SDL_RenderPresent(self.renderer)) return error.SDL;
+        if (!std.meta.eql(self.clipboard_displayed, consent))
+            self.clipboard_displayed_ns = c.SDL_GetTicksNS();
+        self.clipboard_displayed = consent;
         for (places[0..result.panes]) |place| {
             const p = self.tab().panes[place.pane].?;
             if (p.graphics_failure == null) if (p.owner) |owner| owner.requestFrame();
@@ -2592,6 +2822,7 @@ pub fn main(initial: std.process.Init) !void {
     try app.createTab(try app.startup(), null);
     var redraw = true;
     while (app.running) {
+        app.clipboardTurn();
         if (redraw) try app.draw();
         redraw = false;
         app.selectionTick() catch |failure| app.report(failure);
@@ -4417,4 +4648,179 @@ test "session visibility follows tab zoom and explicit window state not focus" {
     try std.testing.expect(!app.panePotentiallyVisible(1, 0));
     try Check.event(&app, c.SDL_EVENT_WINDOW_SHOWN);
     try std.testing.expect(app.panePotentiallyVisible(1, 0));
+}
+
+test "selected clipboard main consent drives a real worker and synthetic provider without clipboard I/O" {
+    try std.testing.expect(c.SDL_SetHint(c.SDL_HINT_VIDEO_DRIVER, "dummy"));
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
+    defer c.SDL_Quit();
+    if (!c.TTF_Init()) return error.TTF;
+    defer c.TTF_Quit();
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var broker = clipboard_broker.Broker.init(threaded.io());
+    defer broker.deinit();
+    const window = c.SDL_CreateWindow("clipboard consent proof", 1000, 650, 0) orelse return error.SDL;
+    defer c.SDL_DestroyWindow(window);
+    try std.testing.expect(c.SDL_StartTextInput(window));
+    const surface = c.SDL_CreateSurface(1000, 650, c.SDL_PIXELFORMAT_RGBA32) orelse return error.SDL;
+    defer c.SDL_DestroySurface(surface);
+    const renderer = c.SDL_CreateSoftwareRenderer(surface) orelse return error.SDL;
+    defer c.SDL_DestroyRenderer(renderer);
+    const geometry = try a.create(canvas.Geometry);
+    defer a.destroy(geometry);
+    geometry.* = .{};
+    var fonts = try testFonts(a);
+    defer fonts.deinit();
+    var ui_fonts = try font_owner.TextFonts.open(a, &fonts, 15);
+    defer ui_fonts.deinit();
+    const wake_event = c.SDL_RegisterEvents(1);
+    try std.testing.expect(wake_event != std.math.maxInt(u32));
+    const child = "stty raw -echo; printf '\\033]0;READY\\007'; IFS= read -r go; " ++
+        "printf '\\033]5522;type=write:id=route\\007\\033]5522;type=wdata:mime=dGV4dC9wbGFpbg==;AAEC/w==\\007\\033]5522;type=walias:mime=dGV4dC9wbGFpbg==;dGV4dC9odG1s\\007\\033]5522;type=wdata\\007\\033[5n'; " ++
+        "actual=$(dd bs=1 count=44 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'); " ++
+        "if [ \"$actual\" = '1b5d353532323b747970653d77726974653a7374617475733d444f4e453a69643d726f7574651b5c1b5b306e' ]; then printf '\\033]0;ACK\\007'; else printf '\\033]0;BAD\\007'; fi; " ++
+        "IFS= read -r go; printf '\\033]5522;type=write:id=second\\007\\033[5n'; " ++
+        "actual=$(dd bs=1 count=46 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'); " ++
+        "if [ \"$actual\" = '1b5d353532323b747970653d77726974653a7374617475733d455045524d3a69643d7365636f6e641b5c1b5b306e' ]; then printf '\\033]0;DENIED\\007'; else printf '\\033]0;BAD\\007'; fi; sleep 30";
+    const owner = try terminal.Terminal.createSelected(a, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = child,
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, try fonts.config(threaded.io(), 15), wake_event, false, &broker);
+    defer owner.destroy();
+    var configuration = config.Config.defaults(a);
+    defer configuration.deinit();
+    var pane_value: Pane = .{ .owner = owner, .recipe = try config.Recipe.copy(a, try configuration.profile(0)), .canvas = canvas.Canvas.init(a) };
+    defer pane_value.recipe.deinit();
+    defer pane_value.canvas.deinit();
+    var tab_value: Tab = .{ .recipe = try config.Recipe.copy(a, try configuration.profile(0)) };
+    defer tab_value.recipe.deinit();
+    tab_value.panes[0] = &pane_value;
+    const Synthetic = struct {
+        fn publish(data: *vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus {
+            const view = data.view();
+            if (view.location != .clipboard or view.count() != 2) return .EIO;
+            const plain = view.get("text/plain") orelse return .EIO;
+            const alias = view.get("text/html") orelse return .EIO;
+            if (plain.ptr != alias.ptr or !std.mem.eql(u8, plain, &.{ 0, 1, 2, 255 })) return .EIO;
+            return .DONE;
+        }
+    };
+    var app: App = .{
+        .init = undefined,
+        .configuration = &configuration,
+        .fonts = &fonts,
+        .window = window,
+        .renderer = renderer,
+        .ui_fonts = &ui_fonts,
+        .geometry = geometry,
+        .wake_event = wake_event,
+        .scale = 1,
+        .bindings = try keybindings.Bindings.init(),
+        .focused = true,
+        .tab_count = 1,
+        .clipboard_host = .{ .broker = &broker, .publish = Synthetic.publish },
+    };
+    app.init.io = threaded.io();
+    app.tabs[0] = &tab_value;
+    defer app.header_cache.deinit();
+    app.syncClipboardFocus();
+    // The hidden projection owns no frame credit requirement for the prompt.
+    const Helper = struct {
+        fn waitTitle(worker: *terminal.Terminal, io: std.Io, expected: []const u8) !void {
+            for (0..5000) |_| {
+                const status = worker.snapshot();
+                if (status.failure) |failure| return failure;
+                if (std.mem.eql(u8, status.title[0..status.title_len], expected)) return;
+                if (std.mem.eql(u8, status.title[0..status.title_len], "BAD")) return error.InvalidClipboardResponse;
+                try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+            }
+            return error.Timeout;
+        }
+        fn awaitNotice(b: *clipboard_broker.Broker, worker: *terminal.Terminal, event_type: u32, wanted: std.meta.Tag(clipboard_broker.Notice)) !clipboard_broker.Notice {
+            // Actual SDL worker wake event, not a frame-driven polling loop.
+            for (0..100) |_| {
+                const status = worker.snapshot();
+                if (status.failure) |failure| return failure;
+                var event_value: c.SDL_Event = undefined;
+                if (!c.SDL_WaitEventTimeout(&event_value, 50)) continue;
+                if (event_value.type != event_type) continue;
+                const notice = b.noticeFor(worker.occurrenceIdentity()) orelse continue;
+                if (std.meta.activeTag(notice) == wanted) return notice;
+            }
+            return error.Timeout;
+        }
+        fn click(app_value: *App, rect: layout.Rect, timestamp: u64, window_id: u32) !void {
+            var event_value: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+            event_value.button.type = c.SDL_EVENT_MOUSE_BUTTON_DOWN;
+            event_value.button.windowID = window_id;
+            event_value.button.button = c.SDL_BUTTON_LEFT;
+            event_value.button.timestamp = timestamp;
+            event_value.button.x = rect.x + rect.width / 2;
+            event_value.button.y = rect.y + rect.height / 2;
+            try std.testing.expect(app_value.clipboardEvent(event_value));
+            event_value.button.type = c.SDL_EVENT_MOUSE_BUTTON_UP;
+            try std.testing.expect(app_value.clipboardEvent(event_value));
+        }
+    };
+    try Helper.waitTitle(owner, threaded.io(), "READY");
+    // Retire startup events before awaiting the actual prompt wake.
+    c.SDL_FlushEvent(wake_event);
+    try owner.submit(.{ .input = .{ .bytes = "go\n" } });
+    const first = (try Helper.awaitNotice(&broker, owner, wake_event, .prompt)).prompt;
+    try std.testing.expectEqual(owner.occurrenceIdentity(), first.ticket.owner);
+    const buttons = App.clipboardButtons(app.clipboardBox());
+    // An unseen prompt and a click timestamped before display never grant.
+    try Helper.click(&app, buttons.allow, c.SDL_GetTicksNS(), c.SDL_GetWindowID(window));
+    try std.testing.expect(broker.prompt(app.clipboardNow()) != null);
+    app.clipboardTurn();
+    try app.draw();
+    const shown = app.clipboard_displayed orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualDeep(first.ticket, shown.ticket);
+    try Helper.click(&app, shown.buttons.allow, app.clipboard_displayed_ns -| 1, c.SDL_GetWindowID(window));
+    try std.testing.expect(broker.prompt(app.clipboardNow()) != null);
+    try Helper.click(&app, shown.buttons.allow, c.SDL_GetTicksNS(), c.SDL_GetWindowID(window) + 1);
+    try std.testing.expect(broker.prompt(app.clipboardNow()) != null);
+    try Helper.click(&app, shown.buttons.allow, c.SDL_GetTicksNS(), c.SDL_GetWindowID(window));
+    const ready = (try Helper.awaitNotice(&broker, owner, wake_event, .prepared)).prepared;
+    try std.testing.expectEqualDeep(first.ticket, ready);
+    // Service provider without a frame draw; child receives exact ordered
+    // DONE and later DSR, not merely a copied snapshot of VT replies.
+    app.clipboardTurn();
+    try Helper.waitTitle(owner, threaded.io(), "ACK");
+    try std.testing.expect(broker.noticeFor(owner.occurrenceIdentity()) == null);
+    c.SDL_FlushEvent(wake_event);
+    try owner.submit(.{ .input = .{ .bytes = "go\n" } });
+    const second = (try Helper.awaitNotice(&broker, owner, wake_event, .prompt)).prompt;
+    try std.testing.expect(second.ticket.start != first.ticket.start);
+    try std.testing.expect(!broker.decide(first.ticket, true, app.clipboardNow()));
+    app.clipboardTurn();
+    try app.draw();
+    const second_shown = app.clipboard_displayed orelse return error.TestUnexpectedResult;
+    var press: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+    press.button.type = c.SDL_EVENT_MOUSE_BUTTON_DOWN;
+    press.button.windowID = c.SDL_GetWindowID(window);
+    press.button.button = c.SDL_BUTTON_LEFT;
+    press.button.timestamp = c.SDL_GetTicksNS();
+    press.button.x = second_shown.buttons.allow.x + 5;
+    press.button.y = second_shown.buttons.allow.y + 5;
+    try app.event(press);
+    try std.testing.expect(app.clipboard_press != null);
+    // Focus loss between a real press and release revokes the grant.
+    var lost: c.SDL_Event = std.mem.zeroes(c.SDL_Event);
+    lost.window.type = c.SDL_EVENT_WINDOW_FOCUS_LOST;
+    lost.window.windowID = c.SDL_GetWindowID(window);
+    lost.window.timestamp = c.SDL_GetTicksNS();
+    try app.event(lost);
+    try std.testing.expect(!app.focused);
+    press.button.type = c.SDL_EVENT_MOUSE_BUTTON_UP;
+    press.button.timestamp = c.SDL_GetTicksNS();
+    try app.event(press);
+    try std.testing.expect(broker.prompt(app.clipboardNow()) == null);
+    try Helper.waitTitle(owner, threaded.io(), "DENIED");
+    try std.testing.expect(broker.takePublication(second.ticket, app.clipboardNow()) == null);
 }

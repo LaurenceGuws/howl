@@ -20,6 +20,12 @@ pub const Prompt = struct {
     ticket: Ticket,
     expires_ns: u64,
 };
+/// Copied main-thread wake fact; neither variant borrows the worker.
+pub const Notice = union(enum) {
+    prompt: Prompt,
+    prepared: Ticket,
+};
+
 /// Ownership has moved to the provider. It must retire or adopt the data
 /// exactly once, then report its outcome; no mutable VT reference escapes.
 pub const Publication = struct {
@@ -117,13 +123,55 @@ pub const Broker = struct {
         }
     }
 
+    /// Copied current focus fact, for main-thread reconciliation.
+    pub fn focusedOwner(self: *Broker) ?u64 {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.focused;
+    }
+
+    /// Exact copied wake fact for one worker. No allocation or VT borrow.
+    pub fn noticeFor(self: *Broker, owner: u64) ?Notice {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const slot = self.slot orelse return null;
+        if (slot.ticket.owner != owner or slot.retired) return null;
+        return switch (slot.phase) {
+            .pending => .{ .prompt = .{ .ticket = slot.ticket, .expires_ns = slot.expires_ns } },
+            .prepared => .{ .prepared = slot.ticket },
+            else => null,
+        };
+    }
+
+    /// Exact worker deadline; idle sibling workers need not poll for it.
+    pub fn deadlineFor(self: *Broker, owner: u64) ?u64 {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const slot = self.slot orelse return null;
+        if (slot.ticket.owner != owner or slot.retired) return null;
+        return switch (slot.phase) {
+            .pending, .approved, .staging, .prepared => slot.expires_ns,
+            else => null,
+        };
+    }
+
+    /// Before stop/join, prevent a new publication for this owner. The
+    /// worker still owns staging until it has retired its actual bytes.
+    pub fn revokeOwner(self: *Broker, owner: u64) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.focused == owner) self.focused = null;
+        if (self.slot) |*slot| if (slot.ticket.owner == owner) revoke(slot);
+    }
+
     /// Borrow no VT data: return a small copied prompt to the main owner.
     pub fn prompt(self: *Broker, now: u64) ?Prompt {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        self.expire(now);
+        // Only the scheduled worker expires its slot. Read-only UI
+        // queries must not remove the worker's pending deadline.
         const slot = self.slot orelse return null;
-        if (slot.phase != .pending) return null;
+        if (slot.phase != .pending or now >= slot.expires_ns) return null;
         return .{ .ticket = slot.ticket, .expires_ns = slot.expires_ns };
     }
 
@@ -132,9 +180,8 @@ pub const Broker = struct {
     pub fn decide(self: *Broker, ticket: Ticket, allow: bool, now: u64) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        self.expire(now);
         const slot = if (self.slot) |*value| value else return false;
-        if (!std.meta.eql(ticket, slot.ticket) or slot.phase != .pending or self.focused != ticket.owner) return false;
+        if (!std.meta.eql(ticket, slot.ticket) or slot.phase != .pending or self.focused != ticket.owner or now >= slot.expires_ns) return false;
         if (allow) {
             slot.phase = .approved;
             slot.expires_ns = now +| deadline_ns;
@@ -161,9 +208,8 @@ pub const Broker = struct {
     pub fn takePublication(self: *Broker, ticket: Ticket, now: u64) ?Publication {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        self.expire(now);
         const slot = if (self.slot) |*value| value else return null;
-        if (!std.meta.eql(ticket, slot.ticket) or self.focused != ticket.owner or slot.phase != .prepared) return null;
+        if (!std.meta.eql(ticket, slot.ticket) or self.focused != ticket.owner or slot.phase != .prepared or now >= slot.expires_ns) return null;
         const prepared = slot.phase.prepared;
         slot.phase = .{ .publishing = prepared.end };
         return .{ .completion = .{ .ticket = ticket, .end = prepared.end }, .data = prepared.data };
@@ -199,11 +245,15 @@ pub const Broker = struct {
     pub fn service(self: *Broker, terminal: *Terminal, now: u64) Terminal.KittyReadReplyError!Service {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        self.expire(now);
         const owner = terminal.observation().occurrenceIdentity();
         const epoch = terminal.resetSequence();
         if (self.slot) |*slot| {
-            if (slot.ticket.owner == owner and slot.ticket.epoch != epoch) self.retire(slot);
+            if (slot.ticket.owner == owner) {
+                if (slot.ticket.epoch != epoch)
+                    self.retire(slot)
+                else if (now >= slot.expires_ns)
+                    revoke(slot);
+            }
         }
 
         if (self.slot) |*slot| {
@@ -482,4 +532,30 @@ test "clipboard broker reset and retired provider outcomes cannot authorize a su
     try std.testing.expect(broker.recordOutcome(next.completion, .EIO));
     try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 5));
     try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EIO:id=route\x1b\\", terminal.replyBytes());
+}
+
+test "clipboard owner deadline survives expired main queries and unrelated worker turns" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var broker = Broker.init(threaded.io());
+    defer broker.deinit();
+    var owner = try Terminal.init(std.testing.allocator, 3, 8);
+    defer owner.deinit();
+    var sibling = try Terminal.init(std.testing.allocator, 3, 8);
+    defer sibling.deinit();
+    const identity = owner.observation().occurrenceIdentity();
+    broker.setFocus(identity, 1);
+    try feed(&owner, start_packet);
+    try std.testing.expectEqual(Service.waiting, try broker.service(&owner, 1));
+    const prompt_value = broker.prompt(1).?;
+    const deadline = prompt_value.expires_ns;
+    try std.testing.expectEqual(@as(?u64, deadline), broker.deadlineFor(identity));
+    try std.testing.expect(broker.deadlineFor(sibling.observation().occurrenceIdentity()) == null);
+    try std.testing.expect(broker.prompt(deadline) == null);
+    try std.testing.expect(!broker.decide(prompt_value.ticket, true, deadline));
+    try std.testing.expectEqual(Service.unhandled, try broker.service(&sibling, deadline));
+    try std.testing.expectEqual(@as(?u64, deadline), broker.deadlineFor(identity));
+    try std.testing.expectEqual(Service.progressed, try broker.service(&owner, deadline));
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EPERM:id=route\x1b\\", owner.replyBytes());
+    try std.testing.expect(broker.deadlineFor(identity) == null);
 }

@@ -4,6 +4,7 @@ const app_presentation = @import("presentation.zig");
 const pty_vt = @import("pty_vt.zig");
 const projection = @import("projection.zig");
 const consequences = @import("consequences.zig");
+const clipboard_broker = @import("clipboard_broker.zig");
 const host_status = @import("program_status.zig");
 const vt_output = @import("howl_vt_output");
 const vt = @import("howl_vt");
@@ -123,9 +124,34 @@ pub const Terminal = opaque {
         event_type: u32,
         initially_visible: bool,
     ) !*Terminal {
+        return createSelected(allocator, io, environ, launch, presentation, event_type, initially_visible, null);
+    }
+
+    /// The main owner may explicitly select one shared host clipboard service.
+    /// It must outlive all selected workers; a null service preserves refusal.
+    pub fn createSelected(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        environ: std.process.Environ,
+        launch: pty_vt.Launch,
+        presentation: app_presentation.Config,
+        event_type: u32,
+        initially_visible: bool,
+        broker: ?*clipboard_broker.Broker,
+    ) !*Terminal {
         // zig-audit: acknowledge ptr_cast
         // reason: State owns this allocation behind the same opaque worker boundary.
-        return @ptrCast(try State.create(allocator, io, environ, launch, presentation, event_type, initially_visible));
+        return @ptrCast(try State.create(allocator, io, environ, launch, presentation, event_type, initially_visible, broker));
+    }
+
+    /// Immutable occurrence identity, copied before the worker starts.
+    pub fn occurrenceIdentity(self: *Terminal) u64 {
+        return self.state().occurrence_identity;
+    }
+
+    /// Wake the worker's existing eventfd after a main-thread broker decision.
+    pub fn wakeClipboard(self: *Terminal) void {
+        self.state().wake();
     }
 
     /// Stops/joins the worker and retires its child; all graphical leases must already be retired.
@@ -344,6 +370,10 @@ const State = struct {
     attention: std.atomic.Value(bool) = .init(false),
     input_activity: std.atomic.Value(bool) = .init(false),
     clipboard: ?[]u8 = null,
+    occurrence_identity: u64 = 0,
+    broker: ?*clipboard_broker.Broker = null,
+    clipboard_retired: bool = false,
+    clipboard_notice: ?clipboard_broker.Notice = null,
     consequence_worked: bool = false,
     status_retry_at: ?u64 = null,
 
@@ -359,6 +389,7 @@ const State = struct {
         presentation: app_presentation.Config,
         event_type: u32,
         initially_visible: bool,
+        broker: ?*clipboard_broker.Broker,
     ) !*State {
         const self = try allocator.create(State);
         errdefer allocator.destroy(self);
@@ -390,6 +421,8 @@ const State = struct {
             .allocator = allocator,
             .io = io,
             .core = core,
+            .occurrence_identity = core.terminal.observation().occurrenceIdentity(),
+            .broker = broker,
             .projection = output_owner,
             .history_capacity = launch.history_rows,
             .program_status_index = host_status.Index.init(allocator),
@@ -405,6 +438,7 @@ const State = struct {
 
     /// All backend leases must be retired before destroying this lifetime owner.
     fn destroy(self: *State) void {
+        if (self.broker) |broker| broker.revokeOwner(self.occurrence_identity);
         self.mutex.lockUncancelable(self.io);
         self.stopping = true;
         self.mutex.unlock(self.io);
@@ -915,12 +949,38 @@ const State = struct {
         }
     }
 
+    // Only the worker releases VT staging. Do this before freeing the
+    // shared admission slot, including on child exit or worker failure.
+    fn retireClipboard(self: *State) void {
+        if (self.clipboard_retired) return;
+        const broker = self.broker orelse return;
+        broker.revokeOwner(self.occurrence_identity);
+        self.core.terminal.abandonKittyClipboardWrite();
+        broker.retireOwner(self.occurrence_identity);
+        self.clipboard_retired = true;
+        self.clipboard_notice = null;
+    }
+
+    fn clipboardWaitMs(self: *State, now: u64) ?i32 {
+        if (self.clipboard_retired) return null;
+        // The existing bounded status-allocation retry already schedules
+        // this worker. An expired clipboard deadline must not spin while
+        // that consequence turn is deferred.
+        if (self.status_retry_at) |retry| if (retry > now) return null;
+        const broker = self.broker orelse return null;
+        const deadline = broker.deadlineFor(self.occurrence_identity) orelse return null;
+        const remaining = deadline -| now;
+        const ms = remaining / std.time.ns_per_ms + @intFromBool(remaining % std.time.ns_per_ms != 0);
+        return @intCast(@min(ms, std.math.maxInt(i32)));
+    }
+
     fn service(self: *State, readable: bool, writable: bool, now: u64) !pty_vt.Service {
         const result = try self.core.service(readable, writable, now);
+        if (result.stream_closed or result.child_exit != null) self.retireClipboard();
         var host: consequences.Applied = .{};
         defer host.deinit(self.allocator);
         if (self.status_retry_at == null or now >= self.status_retry_at.?) {
-            host = try consequences.drain(&self.core.terminal, self.allocator, self.color_preference, &self.program_status_index);
+            host = try consequences.drainSelected(&self.core.terminal, self.allocator, self.color_preference, &self.program_status_index, if (self.clipboard_retired) null else self.broker, now);
             self.status_retry_at = if (host.status_blocked) now +| status_retry_ns else null;
         }
         self.consequence_worked = host.worked;
@@ -931,6 +991,13 @@ const State = struct {
         if (result.child_exit != null and self.status_retry_at == null and self.program_status_index.processExited())
             program_status_dirty = true;
         var host_notify = false;
+        if (!self.clipboard_retired) if (self.broker) |broker| {
+            const notice = broker.noticeFor(self.occurrence_identity);
+            if (!std.meta.eql(notice, self.clipboard_notice)) {
+                self.clipboard_notice = notice;
+                host_notify = true;
+            }
+        };
         if (host.clipboard) |bytes| {
             self.mutex.lockUncancelable(self.io);
             const previous = self.clipboard;
@@ -1032,7 +1099,9 @@ const State = struct {
     }
 
     fn run(self: *State) void {
+        defer self.retireClipboard();
         self.loop() catch |failure| {
+            self.retireClipboard();
             self.mutex.lockUncancelable(self.io);
             self.status.failure = failure;
             self.mutex.unlock(self.io);
@@ -1110,6 +1179,7 @@ const State = struct {
             var timeout: i32 = if (result.stream_closed and result.child_exit == null) 50 else -1;
             for ([_]?i32{
                 self.output_gate.waitMs(now),
+                self.clipboardWaitMs(now),
                 if (self.status_retry_at) |deadline| retry: {
                     const remaining = deadline -| now;
                     const ms = remaining / std.time.ns_per_ms + @intFromBool(remaining % std.time.ns_per_ms != 0);
@@ -1129,9 +1199,12 @@ const State = struct {
             if (queue_turn == .more or retry_after_write_progress or retry_after_scalar_recovery or retry_preference or self.core.bufferedOutputRunnable() or self.search.status.phase == .scanning or self.consequence_worked) timeout = 0;
             const can_read = self.core.readAdmissible();
             const can_write = result.write_pending or self.core.writePending();
+            // A blocked clipboard head does not admit more child bytes,
+            // but a PTY hangup must still revoke its pending host authority.
+            const watch_clipboard = self.broker != null and !self.clipboard_retired;
             var fds = [_]posix.pollfd{
                 .{
-                    .fd = if (!can_read and !can_write) -1 else try self.core.descriptor(),
+                    .fd = if (!can_read and !can_write and !watch_clipboard) -1 else try self.core.descriptor(),
                     .events = (if (can_read) @as(i16, posix.POLL.IN | posix.POLL.HUP) else 0) | (if (can_write) @as(i16, posix.POLL.OUT) else 0),
                     .revents = 0,
                 },
@@ -1141,6 +1214,7 @@ const State = struct {
             // reason: Readiness is consumed from each exact revents mask below; the aggregate ready count adds no authority.
             _ = try posix.poll(&fds, timeout);
             if (fds[1].revents & posix.POLL.IN != 0) self.drainWake();
+            if (watch_clipboard and fds[0].revents & (posix.POLL.HUP | posix.POLL.ERR) != 0) self.retireClipboard();
             readable = fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0 or self.core.bufferedOutputRunnable();
             writable = fds[0].revents & posix.POLL.OUT != 0;
         }
@@ -3472,4 +3546,52 @@ test "legacy and DEC synchronized begins refresh the bounded host deadline witho
     try std.testing.expect(!core.terminal.synchronizedOutput());
     try std.testing.expect(state.output_gate.released(false));
     try std.testing.expectEqual(@as(?i32, null), state.output_gate.waitMs(final_deadline + 2));
+}
+
+test "selected clipboard worker observes PTY hangup while consent blocks further reads" {
+    if (!c.SDL_Init(c.SDL_INIT_EVENTS)) return error.SDL;
+    defer c.SDL_Quit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var broker = clipboard_broker.Broker.init(threaded.io());
+    defer broker.deinit();
+    const owner = try Terminal.createSelected(std.testing.allocator, threaded.io(), std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty raw -echo; printf '\\033]0;READY\\007'; IFS= read -r go; printf '\\033]5522;type=write:id=exit\\007'; sleep 1; exit 0",
+        .rows = 4,
+        .columns = 20,
+        .history_rows = 8,
+    }, testPresentation(), c.SDL_RegisterEvents(1), false, &broker);
+    defer owner.destroy();
+    const now: u64 = @intCast(std.Io.Clock.awake.now(threaded.io()).toNanoseconds());
+    broker.setFocus(owner.occurrenceIdentity(), now);
+    owner.wakeClipboard();
+    try waitTitle(owner, "READY");
+    try owner.submit(.{ .input = .{ .bytes = "go\n" } });
+    var prompt_value: ?clipboard_broker.Prompt = null;
+    for (0..5000) |_| {
+        const timestamp: u64 = @intCast(std.Io.Clock.awake.now(threaded.io()).toNanoseconds());
+        prompt_value = broker.prompt(timestamp);
+        if (prompt_value != null) break;
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    const ticket = (prompt_value orelse return error.Timeout).ticket;
+    // No main decision, no synthetic timer kick and no presentation demand.
+    // The real PTY hangup must wake the blocked worker before 30s expiry.
+    var exited = false;
+    for (0..5000) |_| {
+        const status = owner.snapshot();
+        if (status.failure) |failure| return failure;
+        if (status.child_exit != null) {
+            exited = true;
+            break;
+        }
+        try std.Io.sleep(threaded.io(), .fromMilliseconds(1), .awake);
+    }
+    try std.testing.expect(exited);
+    const timestamp: u64 = @intCast(std.Io.Clock.awake.now(threaded.io()).toNanoseconds());
+    try std.testing.expect(broker.noticeFor(owner.occurrenceIdentity()) == null);
+    try std.testing.expect(broker.deadlineFor(owner.occurrenceIdentity()) == null);
+    try std.testing.expect(!broker.decide(ticket, true, timestamp));
+    try std.testing.expect(broker.takePublication(ticket, timestamp) == null);
 }

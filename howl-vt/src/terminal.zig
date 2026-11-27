@@ -9148,6 +9148,13 @@ pub const Terminal = struct {
         self.kitty_write = null;
     }
 
+    /// Release transient write staging when the owning host transport has
+    /// retired. No reply is fabricated for a child which can no longer receive it.
+    pub fn abandonKittyClipboardWrite(self: *Terminal) void {
+        self.requireNoPreparedResize();
+        self.discardKittyWrite();
+    }
+
     /// Inspect a validated write start without granting any clipboard access.
     pub fn inspectKittyClipboardWrite(self: *const Terminal, generation: u64) error{StaleClipboardRequest}!?KittyLocation {
         const request = try self.kittyClipboardHead(generation);
