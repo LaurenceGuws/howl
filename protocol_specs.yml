@@ -12495,6 +12495,32 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.clipboard_5522
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard transport never normalizes malformed request bytes into valid data
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal preserves exact FIFO head and replies under pressure
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal allocation failure does not consume a request
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: MIME clipboard request yields before later device status reply
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
+            C0/stray ESC bytes rather than normalize invalid data; filtered numeric selector rejected. Caller-selected refusal
+            validates known unique start metadata and serialized status, with exact FIFO generation and failure rollback. Existing
+            BEL/ST/C1 and opaque caller API preserved. Not full MIME exchange.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12506,6 +12532,25 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.clipboard_5522
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal preserves exact FIFO head and replies under pressure
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: MIME clipboard request yields before later device status reply
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Current application policy declines all selected valid read starts, including MIME listing, with EPERM; malformed
+            or invalid encoded/UTF8 read ignored. No system read, listing, prompt or data permission granted. Caller chooses refusal
+            through exact FIFO head; worker yields before later canonical replies. No OK/DATA/DONE implementation.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: write
       section: Writing data to the system clipboard
       level: defined
@@ -12517,11 +12562,42 @@ specifications:
         relation: protocol-family
         legacy_records:
         - kitty.osc.clipboard_5522
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal allocation failure does not consume a request
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Current application declines selected valid write starts with EPERM and structurally unambiguous writes with
+            invalid encoded metadata or unexpected data with EINVAL. No write accepted; unassociated wdata/walias/end silently
+            consumed. Ambiguous/unknown structural envelopes ignored. No system write, transaction assembly, alias data or source
+            minimum64MB implementation.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: password
       section: Avoiding repeated permission prompts
       level: defined
       wire: pw=... name=...
       rule: A named permission token can avoid repeated prompts when the user has authorized its scope.
+      test_locations:
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: 'Encoded name/pw validated as complete standard Base64 UTF8 for known start grammar. A syntactically valid password
+            and name do not grant permission: current host declines the request and does not echo credentials. No token store,
+            prompts, authorization scope or one-use lifecycle implemented.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: paste-events
       section: Allowing terminal applications to respond to paste events
       level: defined
@@ -12536,9 +12612,22 @@ specifications:
         relation: wire-family
         legacy_records:
         - kitty.mode.paste_events
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange
+        relation: protocol-family
       relations:
       - kind: reaffirms
         clause: rockorager_paste.enable
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Existing 5522 requested-mode state/save/restore remains available as caller intent. DECRQM now returns unsupported0
+            regardless of that bit; ordinary bracketed paste stays unchanged. No user-triggered MIME notification, token, precedence
+            or full exchange support inferred.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: detection
       section: Detecting support for this protocol
       level: defined
@@ -12549,11 +12638,41 @@ specifications:
       relations:
       - kind: reaffirms
         clause: rockorager_paste.detect
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: DECRPM returns0 in reset and requested-set states, including after save/restore and C1 framing selection, rather
+            than falsely advertising incomplete underlying MIME exchange. No positive capability claim.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: mux-id
       section: Support for terminal multiplexers
       level: defined
       wire: id=...
       rule: Response metadata preserves the sanitized request id so a multiplexer can route responses.
+      test_locations:
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal preserves exact FIFO head and replies under pressure
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Selected read/write denial replies echo only allowed ASCII id characters, omit id when sanitized empty, use bounded
+            original packet length (no extra 512-byte pinned implementation truncation). Exact caller FIFO identity and reply
+            ordering/rollback proven. All positive read/write multi-response routes remain open.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: mime-alias
       section: docs/clipboard.rst:162-173
       level: defined
@@ -12567,6 +12686,23 @@ specifications:
       wire: OSC 5522 Base64 payload / mime / name / pw
       rule: Standard padded Base64; no silent discard invalid characters. Invalid write EINVAL abort, invalid read ignored.
         wdata padding applies to concatenation for one MIME.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard transport never normalizes malformed request bytes into valid data
+        relation: protocol-family
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Preserve malformed encoded bytes at transport boundary, validate padded standard Base64 and UTF8 for complete
+            selected start fields and read payload. Invalid read is silent, recognized invalid write start EINVAL, malformed structure
+            ignored. No write data concatenation or alias validation until write admission is selected.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: read-response
       section: docs/clipboard.rst:47-102
       level: defined
@@ -12575,6 +12711,29 @@ specifications:
       - OSC 5522
       rule: loc=primary optional; Base64 period queries MIME list. OK then sequential MIME DATA chunks <=4096 decoded bytes
         each padded as needed; DONE. Errors ENOSYS/EPERM/EBUSY instead of OK. Listing should not prompt.
+      test_locations:
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal preserves exact FIFO head and replies under pressure
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty clipboard refusal allocation failure does not consume a request
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: MIME clipboard request yields before later device status reply
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Selected negative EPERM branch serializes exact seven-bit Kitty OSC5522 response with sanitized id and consumes
+            only matching FIFO head after full reply admission. Full buffer/OOM leave request and earlier replies intact; app
+            yields before subsequent device status. No positive MIME listing/data/chunks/DONE or other read statuses.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: write-data
       section: docs/clipboard.rst:105-160
       level: defined
@@ -12583,6 +12742,19 @@ specifications:
       - OSC 5522
       rule: Sequential chunks per MIME after type=write; <=4096 decoded bytes; no MIME/data ends, DONE reply. EIO/EINVAL/ENOSYS/EPERM/EBUSY/EFBIG
         abort and discard, ignore until next write. Source minimum acceptance64MB.
+      test_locations:
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: No active write is admitted by this profile; continuations, aliases and end are ignored after denial. No multipart
+            write payload ownership, EFBIG or successful DONE.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: paste-password
       section: docs/clipboard.rst:200-221,264-266
       level: defined
@@ -16246,7 +16418,7 @@ specifications:
           source: charproc.c:4809-4817 and dpmodes private-mode dispatch
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
-        test: 'terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Howl'
+        test: 'terminal: pinned libvterm ignores DEC 1007 1016 and 5522 requests'
         relation: wire-family
         legacy_records:
         - libvterm.csi.decset
@@ -16275,7 +16447,7 @@ specifications:
           source: charproc.c:4809-4817 and dpmodes private-mode dispatch
       test_locations:
       - file: howl-vt/test/unit/terminal_modes_test.zig
-        test: 'terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Howl'
+        test: 'terminal: pinned libvterm ignores DEC 1007 1016 and 5522 requests'
         relation: wire-family
         legacy_records:
         - libvterm.csi.decrst
@@ -24434,6 +24606,19 @@ specifications:
       relations:
       - kind: extends
         clause: kitty_clipboard.envelope
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Mode request remains internal intent, not advertised as supported. Author requires complete underlying OSC5522;
+            current negative profile does not enable actual MIME notifications.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: detect
       section: Detection and Enabling
       level: defined
@@ -24449,6 +24634,19 @@ specifications:
       - kind: related
         clause: dec_vt420.report-mode
         role: reply
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Correct unsupported0 response for current profile independent of requested set/reset; no full paste event support
+            inferred.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: notify
       section: Paste Notification Format; Paste Behavior
       level: defined
@@ -24490,6 +24688,20 @@ specifications:
       - kind: related
         clause: xterm_controls.bracketed-paste-mode
         role: precedence
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: With incomplete MIME exchange reported unsupported, ordinary DEC2004 paste encoding remains active even if an
+            application requested5522. This is an unsupported-mode fallback, not implementation of precedence for a supported
+            MIME event mode.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
     - id: password
       section: Security Considerations
       level: defined
@@ -24506,6 +24718,23 @@ specifications:
       wire: unsolicited MIME list versus explicit data request
       rule: Listing available types need not prompt and does not include data. Actual clipboard contents transmitted only on
         explicit read; apply ordinary Kitty security policy. Applications must validate MIME types and sanitize received data.
+      test_locations:
+      - file: howl-app/src/consequences.zig
+        test: unsupported MIME clipboard policy returns routed errors without granting host access
+        relation: protocol-family
+      - file: howl-app/src/pty_vt.zig
+        test: MIME clipboard request yields before later device status reply
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_01:
+          scope: Selected host policy grants no read, write or token authorization; valid listing/read requests explicitly denied
+            instead of accessing host clipboard. No actual MIME inventory or paste data. Permission UI, listing and authorized
+            retrieval remain separate.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+            Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+            proofs; no clipboard permission or full exchange claim.
+          baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
   iterm2_current:
     title: iTerm2 current proprietary escape-code additions and changed profiles
     author: iTerm2 project
@@ -41312,4 +41541,89 @@ reconciliation:
     - kitty_graphics.terminal-interaction
     - kitty_graphics.quota
     scope: Shared non-Kitty decoded resource lifetime only, preserving existing selection geometry and protocol meaning.
+- id: kitty-clipboard-bounded-refusal-and-truthful-detection
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-protocol-and-existing-host-permission-boundary
+  operator_alignment: '2026-11-27: operator agreed to clipboard/paste as next modern extension family. Selected first
+    bounded transport/refusal slice without additional host clipboard permissions.'
+  accepted_interpretation:
+    effect: 'Preserve exact recognized OSC5522 payload bytes for caller policy; reject corrupted numeric prefix rather
+      than normalize. Existing raw packet FIFO stays the transport owner. The current app has no MIME clipboard grant:
+      select explicit caller refusal for valid read/write starts including listing (EPERM), invalid encoded metadata or
+      unexpected payload on structurally unambiguous write starts (EINVAL), silent invalid read/ambiguous structure/unassociated
+      write continuation. Validate known unique metadata and complete padded Base64/UTF8 text; sanitize returned id to
+      author ASCII set. Serialize before consuming exact head, preserve on reply pressure/allocation failure, and yield
+      host service before later child replies. Mode5522 request state remains internal caller intent and saves/restores,
+      but DECRPM reports0 unsupported until the full exchange qualifies; ordinary paste unchanged. No actual MIME list/data
+      or token grant, no new native C ABI, no positive capability claim.'
+  selects:
+    kitty.clipboard.initial-refusal-and-detection: effect
+  reason: Author forbids silent removal of invalid Base64 bytes and requires error or silence according to operation;
+    pinned source routes read/write status with sanitized IDs and ignores continuations without admitted write. Existing
+    app silently consumed packets while falsely reporting mode5522 support. Correct those boundaries before enabling data
+    access, preserve caller-neutral VT and avoid implicit OS permissions. Strict known-start grammar, all-read denial
+    including listing, no arbitrary token use and current unsupported report are local scoped policies rather than full
+    protocol parity.
+  evidence_basis: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+    lines12-45,50-102,105-160,194-198,223-252; kitty/clipboard.py224-248,290-297,384-474,521-565,624-659 and kitty/notifications.py922-927.
+    Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
+    proofs; no clipboard permission or full exchange claim.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected OSC5522 exact transport, host refusal and unsupported-mode detection
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/parser.zig:OscControl
+    - howl-vt/src/clipboard.zig:appendKittyRefusal
+    - howl-vt/src/consequences.zig:State
+    - howl-vt/src/terminal.zig:declineKittyClipboard
+    - howl-vt/src/terminal.zig:applyReportEvent
+    - howl-app/src/consequences.zig:drain
+    - howl-app/src/pty_vt.zig:Core
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty clipboard transport never normalizes malformed request bytes into valid data
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty clipboard refusal preserves exact FIFO head and replies under pressure
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty clipboard refusal allocation failure does not consume a request
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_modes_test.zig
+      test: Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange
+      relation: protocol-family
+    - file: howl-app/src/consequences.zig
+      test: unsupported MIME clipboard policy returns routed errors without granting host access
+      relation: protocol-family
+    - file: howl-app/src/pty_vt.zig
+      test: MIME clipboard request yields before later device status reply
+      relation: protocol-family
+    verified_subset: Exact malformed payload transport, filtered selector rejection, valid and invalid selected start
+      refusal with safe routing id, no host clipboard result, FIFO identity and allocation/reply failure recovery, 7-bit
+      status framing, ordered host boundary, unsupported DECRPM and ordinary DEC2004 fallback.
+    boundary: Only negative/caller refusal and selected transport/detection are qualified. Positive MIME listing/read
+      response, transactional writes and alias data, minimum64MB, clipboard loc/permissions/UI, one-use password, supported
+      paste event precedence, native C typed status helper and full malformed/capture/host integration remain open.
+    not_full_because: No complete OSC5522 or paste-event exchange, real host permission/data path or positive capability
+      advertisement implemented.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.read
+    - kitty_clipboard.write
+    - kitty_clipboard.password
+    - kitty_clipboard.paste-events
+    - kitty_clipboard.detection
+    - kitty_clipboard.mux-id
+    - kitty_clipboard.base64-admission
+    - kitty_clipboard.read-response
+    - kitty_clipboard.write-data
+    - rockorager_paste.enable
+    - rockorager_paste.detect
+    - rockorager_paste.precedence
+    - rockorager_paste.security
+    scope: Initial bounded negative/refusal and detection slice; no underlying permission grant or full exchange selection.
 pending_reconciliation: []

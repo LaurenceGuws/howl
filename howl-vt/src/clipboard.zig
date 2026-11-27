@@ -1,4 +1,4 @@
-//! OSC 52 clipboard grammar, bounded Base64 codec, and child-directed replies.
+//! Clipboard grammar, bounded Base64 codec, and child-directed replies.
 //!
 //! Terminal composition retains validated occurrences through `consequences.zig`;
 //! this owner classifies borrowed OSC 52 payloads and performs exact codec work.
@@ -106,6 +106,109 @@ pub fn appendQueryReply(
     const encoded = std.base64.standard.Encoder.encode(payload[prefix_len..], bytes);
     std.debug.assert(encoded.len == encoded_len);
     try output.appendString(.terminal, .osc, payload);
+}
+
+const KittyOperation = enum { read, write };
+const KittyStart = struct {
+    kind: KittyOperation,
+    id: []const u8,
+    valid: bool,
+};
+
+// Validate complete encoded strings without repairing malformed wire bytes.
+// Write-data fragments are deliberately not decoded here: no write has been
+// admitted by the caller that selects this refusal lane.
+fn encodedText(data: []const u8, scratch: []u8) ?[]const u8 {
+    if (data.len % 4 != 0) return null;
+    const decoder = std.base64.standard.Decoder;
+    const count = decoder.calcSizeForSlice(data) catch return null;
+    if (count > scratch.len) return null;
+    decoder.decode(scratch[0..count], data) catch return null;
+    const decoded = scratch[0..count];
+    if (!std.unicode.utf8ValidateSlice(decoded)) return null;
+    return decoded;
+}
+
+// Classify only unambiguous known start metadata. A malformed structural
+// envelope cannot supply a reliable routing identity; ignore it. A recognized
+// write with invalid encoded metadata or unexpected data gets EINVAL.
+fn kittyStart(raw: []const u8) ?KittyStart {
+    const separator = std.mem.indexOfScalar(u8, raw, ';') orelse raw.len;
+    const data = if (separator == raw.len) "" else raw[separator + 1 ..];
+    var fields = std.mem.splitScalar(u8, raw[0..separator], ':');
+    var kind: ?KittyOperation = null;
+    var id: []const u8 = "";
+    var seen: u8 = 0;
+    var valid = true;
+    var scratch: [consequences.retained_packet_bytes_max]u8 = undefined;
+    while (fields.next()) |field| {
+        const equals = std.mem.indexOfScalar(u8, field, '=') orelse return null;
+        const key = field[0..equals];
+        const value = field[equals + 1 ..];
+        const slot: u3 = if (std.mem.eql(u8, key, "type")) blk: {
+            kind = if (std.mem.eql(u8, value, "read")) .read else if (std.mem.eql(u8, value, "write")) .write else return null;
+            break :blk 0;
+        } else if (std.mem.eql(u8, key, "id")) blk: {
+            id = value;
+            break :blk 1;
+        } else if (std.mem.eql(u8, key, "loc")) blk: {
+            if (!std.mem.eql(u8, value, "primary")) valid = false;
+            break :blk 2;
+        } else if (std.mem.eql(u8, key, "name")) blk: {
+            if (encodedText(value, &scratch) == null) valid = false;
+            break :blk 3;
+        } else if (std.mem.eql(u8, key, "pw")) blk: {
+            if (encodedText(value, &scratch) == null) valid = false;
+            break :blk 4;
+        } else return null;
+        const bit = @as(u8, 1) << slot;
+        if (seen & bit != 0) return null;
+        seen |= bit;
+    }
+    const operation = kind orelse return null;
+    switch (operation) {
+        .read => {
+            const decoded = encodedText(data, &scratch) orelse return null;
+            if (std.mem.trim(u8, decoded, " \t\r\n\x0b\x0c").len == 0) return null;
+            for (decoded) |byte| {
+                if ((byte < 0x20 and !std.ascii.isWhitespace(byte)) or byte == 0x7f) return null;
+            }
+        },
+        .write => if (data.len != 0) {
+            valid = false;
+        },
+    }
+    return .{ .kind = operation, .id = id, .valid = valid };
+}
+
+/// Serializes the caller's refusal of an OSC 5522 packet. No clipboard
+/// data, permission token, or host action is accepted. Invalid reads and
+/// unassociated write continuations are silent; valid starts receive EPERM.
+/// The original packet is bounded by the canonical consequence owner.
+pub fn appendKittyRefusal(output: *replies.Buffer, raw: []const u8) replies.AppendError!void {
+    std.debug.assert(raw.len <= consequences.retained_packet_bytes_max);
+    const request = kittyStart(raw) orelse return;
+    if (request.kind == .read and !request.valid) return;
+    const header = switch (request.kind) {
+        .read => "5522;type=read:status=EPERM",
+        .write => if (request.valid) "5522;type=write:status=EPERM" else "5522;type=write:status=EINVAL",
+    };
+    var response: [consequences.retained_packet_bytes_max + 64]u8 = undefined;
+    @memcpy(response[0..header.len], header);
+    const id_start = header.len + ":id=".len;
+    var end = id_start;
+    for (request.id) |byte| switch (byte) {
+        'a'...'z', 'A'...'Z', '0'...'9', '-', '_', '+', '.' => {
+            response[end] = byte;
+            end += 1;
+        },
+        else => {},
+    };
+    if (end == id_start)
+        end = header.len
+    else
+        @memcpy(response[header.len..id_start], ":id=");
+    try output.appendString(.kitty, .osc, response[0..end]);
 }
 
 fn decodeSetInto(raw: []const u8, output: []u8) IntoError!u64 {

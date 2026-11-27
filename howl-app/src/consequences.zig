@@ -68,7 +68,18 @@ pub fn drain(
                         continue;
                     }
                 },
-                .packet => {},
+                .packet => {
+                    // The host has not granted MIME clipboard access.
+                    // Refusal is a protocol effect, not an OS clipboard call.
+                    terminal.declineKittyClipboard(id) catch |failure| switch (failure) {
+                        error.ReplyLimit => {
+                            result.worked = previously_worked;
+                            return result;
+                        },
+                        else => return failure,
+                    };
+                    continue;
+                },
             },
             .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
                 try terminal.replyPointerShape(id, "default");
@@ -653,4 +664,32 @@ test "color preference host query retains exact identity under reply saturation"
     try std.testing.expect(recovered.worked);
     try std.testing.expect(terminal.consequenceHead() == null);
     try std.testing.expectEqualStrings("\x1b[?997;2n", terminal.replyBytes());
+}
+
+test "unsupported MIME clipboard policy returns routed errors without granting host access" {
+    var terminal = try vt.Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    var statuses = host_status.Index.init(std.testing.allocator);
+    defer statuses.deinit();
+    const packets =
+        "\x1b]5522;type=read:id=a/b!+._-;dGV4dC9wbGFpbg==\x07" ++
+        "\x1b]5522;type=read:id=list;Lg==\x1b\\" ++
+        "\x1b]5522;type=read:id=bad;Q\x01Q==\x07" ++
+        "\x1b]5522;type=write:id=bad-write:name=!!!!\x07" ++
+        "\x1b]5522;type=write:id=write:pw=QQ==:name=QQ==\x1b\\" ++
+        "\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;QQ==\x07" ++
+        "\x1b]5522;type=walias:mime=dGV4dC9wbGFpbg==;dGV4dC9odG1s\x07" ++
+        "\x1b]5522;type=wdata\x07";
+    try std.testing.expect((try terminal.feed(packets)).stateChanged());
+    var applied = try drain(&terminal, std.testing.allocator, .dark, &statuses);
+    defer applied.deinit(std.testing.allocator);
+    try std.testing.expect(applied.worked and applied.clipboard == null);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqualStrings(
+        "\x1b]5522;type=read:status=EPERM:id=ab+._-\x1b\\" ++
+            "\x1b]5522;type=read:status=EPERM:id=list\x1b\\" ++
+            "\x1b]5522;type=write:status=EINVAL:id=bad-write\x1b\\" ++
+            "\x1b]5522;type=write:status=EPERM:id=write\x1b\\",
+        terminal.replyBytes(),
+    );
 }

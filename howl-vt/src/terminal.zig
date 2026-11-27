@@ -2450,7 +2450,10 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             reply_buffer,
             encode_buf,
             mode,
-            mode_report_mod.decState(dec_modes, mode),
+            // The 5522 request bit is not yet a working MIME paste
+            // exchange. Preserve its save/restore owner, but do not
+            // advertise support until the full clipboard contract exists.
+            if (mode == 5522) 0 else mode_report_mod.decState(dec_modes, mode),
         ),
         .sixel_register_count_query => try fixed_report_mod.appendSixelRegisterCount(
             reply_buffer,
@@ -8404,7 +8407,7 @@ pub const Terminal = struct {
         return self.modes.termios_signals;
     }
 
-    /// Reports whether mode 5522 requests the operator-triggered MIME paste exchange.
+    /// Reports requested mode 5522 intent, not support for the incomplete MIME exchange.
     pub fn pasteEvents(self: *const Terminal) bool {
         return self.modes.paste_events;
     }
@@ -8631,6 +8634,11 @@ pub const Terminal = struct {
     /// can overtake them. The embedding owner, not VT, supplies the preference.
     pub fn hasPendingColorPreferenceQuery(self: *const Terminal) bool {
         return self.consequences.color_preference_query_count != 0;
+    }
+
+    /// An ordered OSC 5522 packet awaits host policy before later replies.
+    pub fn hasPendingKittyClipboard(self: *const Terminal) bool {
+        return self.consequences.hasKittyClipboard();
     }
 
     /// Borrows the oldest retained consequence across every protocol family.
@@ -9045,6 +9053,22 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
         self.content_sequence = self.semantic_sequence;
         return true;
+    }
+
+    /// Declines the exact FIFO-head OSC 5522 packet under caller policy.
+    /// Valid starts receive EPERM, invalid encoded writes receive EINVAL,
+    /// and other packets are ignored. Reply pressure preserves the head.
+    pub fn declineKittyClipboard(self: *Terminal, generation: u64) ClipboardReplyError!void {
+        self.requireNoPreparedResize();
+        const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
+        if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
+            return error.StaleClipboardRequest;
+        const request = consequence.clipboard;
+        if (request.protocol != .kitty_5522 or request.kind != .packet) return error.StaleClipboardRequest;
+        try clipboard_mod.appendKittyRefusal(&self.reply_buffer, request.payload);
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
     }
 
     /// Queue one exact reply for the matching FIFO-head OSC 22 query.

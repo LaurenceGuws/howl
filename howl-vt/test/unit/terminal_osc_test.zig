@@ -4485,3 +4485,78 @@ test "decoded historical images remain owned until their entire retained extent 
         try std.testing.expect(terminal.images(0).image(0).?.id > id);
     }
 }
+
+test "Kitty clipboard transport never normalizes malformed request bytes into valid data" {
+    for ([_][]const u8{
+        "type=read;dGV4\x01dC9wbGFpbg==",
+        "type=read;dGV4\x1bXdC9wbGFpbg==",
+        "type=write:name=QQ\x02==",
+        "type=wdata:mime=dGV4dC9wbGFpbg==;Q\x00Q==",
+    }) |payload| for ([_][]const u8{ "\x07", "\x1b\\" }) |term| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        var bytes: [128]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&bytes, "\x1b]5522;{s}{s}", .{ payload, term });
+        for (wire[0 .. wire.len - 1]) |byte|
+            try std.testing.expect(!(try terminal.feed(&.{byte})).stateChanged());
+        try std.testing.expect((try terminal.feed(wire[wire.len - 1 ..])).stateChanged());
+        const request = terminal.consequenceHead().?.clipboard;
+        try std.testing.expect(request.kind == .packet);
+        try std.testing.expectEqualStrings(payload, request.payload);
+        try terminal.consumeConsequence(request.generation);
+        try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+    };
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try std.testing.expect(!(try terminal.feed("\x1b]55\x0122;type=write\x07")).stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expect((try terminal.feed("\x1b]5522;type=write\x07")).stateChanged());
+    try std.testing.expectEqualStrings("type=write", terminal.consequenceHead().?.clipboard.payload);
+}
+
+test "Kitty clipboard refusal preserves exact FIFO head and replies under pressure" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]52;c;QQ==\x07\x1b]5522;type=read:id=a+b;Lg==\x1b\\");
+    const first = terminal.consequenceHead().?.clipboard;
+    try std.testing.expect(terminal.hasPendingKittyClipboard());
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.declineKittyClipboard(first.generation));
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.declineKittyClipboard(first.generation + 1));
+    try terminal.consumeConsequence(first.generation);
+    const request = terminal.consequenceHead().?.clipboard;
+    const filled = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes, false);
+    defer std.testing.allocator.free(filled);
+    const sequence = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.declineKittyClipboard(request.generation));
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualStrings(filled, terminal.replyBytes());
+    try std.testing.expectEqual(request.generation, terminal.consequenceHead().?.clipboard.generation);
+    try std.testing.expectEqualStrings("type=read:id=a+b;Lg==", terminal.consequenceHead().?.clipboard.payload);
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b G");
+    try terminal.declineKittyClipboard(request.generation);
+    // Kitty protocol response framing remains seven-bit.
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=a+b\x1b\\", terminal.replyBytes());
+    try std.testing.expect(!terminal.hasPendingKittyClipboard());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.declineKittyClipboard(request.generation));
+}
+
+test "Kitty clipboard refusal allocation failure does not consume a request" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.init(failing.allocator(), 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]5522;type=write:id=keep\x07");
+    const request = terminal.consequenceHead().?.clipboard;
+    const sequence = terminal.semanticSequence();
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.declineKittyClipboard(request.generation));
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(request.generation, terminal.consequenceHead().?.clipboard.generation);
+    failing.fail_index = std.math.maxInt(usize);
+    try terminal.declineKittyClipboard(request.generation);
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EPERM:id=keep\x1b\\", terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}

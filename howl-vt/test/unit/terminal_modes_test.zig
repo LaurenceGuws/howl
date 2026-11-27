@@ -899,7 +899,7 @@ test "Kitty parameterless mode save restores the exact curated mode set" {
     try std.testing.expectEqualStrings(
         "\x1b[20;1$y\x1b[4;1$y" ++
             "\x1b[?8;2$y\x1b[?2004;1$y\x1b[?1004;1$y\x1b[?2031;1$y" ++
-            "\x1b[?5522;1$y\x1b[?2048;1$y\x1b[?1;1$y\x1b[?25;2$y" ++
+            "\x1b[?5522;0$y\x1b[?2048;1$y\x1b[?1;1$y\x1b[?25;2$y" ++
             "\x1b[?7;2$y\x1b[?1003;1$y\x1b[?1006;1$y\x1b[?5;1$y",
         pendingOutput(&terminal),
     );
@@ -943,7 +943,7 @@ test "individual DEC mode saves retain every implemented mode without saturation
     try std.testing.expect((try terminal.feed("\x1b[?5522h\x1b[?5522r")).stateChanged());
     try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b[?5522$p")).stateChanged());
-    try std.testing.expectEqualStrings("\x1b[?5522;2$y", pendingOutput(&terminal));
+    try std.testing.expectEqualStrings("\x1b[?5522;0$y", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b[?1;7;25h")).stateChanged());
@@ -1075,7 +1075,7 @@ test "Kitty caller-coordinated modes retain exact state reports and color notifi
 
     try std.testing.expect((try terminal.feed("\x1b[?2031$p\x1b[?5522$p\x1b[?19997$p")).stateChanged());
     try std.testing.expectEqualStrings(
-        "\x1b[?2031;1$y\x1b[?5522;1$y\x1b[?19997;0$y",
+        "\x1b[?2031;1$y\x1b[?5522;0$y\x1b[?19997;0$y",
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
@@ -2018,16 +2018,16 @@ test "ANSI mode queries and XTREPORTCOLORS append caller output" {
     try std.testing.expectEqualStrings("\x1b[2;1$y\x1b[4;1$y\x1b[12;1$y\x1b[20;1$y\x1b[0;1#Q", pendingOutput(&terminal));
 }
 
-test "terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Howl" {
+test "terminal: pinned libvterm ignores DEC 1007 1016 and 5522 requests" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 10);
     defer terminal.deinit();
 
     // Pinned libvterm state.c::set_dec_mode has no case for these numbers,
-    // while Howl deliberately implements xterm alternate-wheel, SGR-pixel
-    // mouse and typed paste-event modes for its independent VT embedders.
+    // while Howl implements alternate-wheel and SGR-pixel mouse, and
+    // retains paste-event intent without advertising the incomplete exchange.
     write(&terminal, "\x1b[?1007$p\x1b[?1016$p\x1b[?5522$p");
     try std.testing.expectEqualStrings(
-        "\x1b[?1007;2$y\x1b[?1016;2$y\x1b[?5522;2$y",
+        "\x1b[?1007;2$y\x1b[?1016;2$y\x1b[?5522;0$y",
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
@@ -2040,14 +2040,14 @@ test "terminal: pinned libvterm ignores DEC 1007 1016 and 5522 implemented by Ho
     try std.testing.expect(terminal.pasteEvents());
     write(&terminal, "\x1b[?1007$p\x1b[?1016$p\x1b[?5522$p");
     try std.testing.expectEqualStrings(
-        "\x1b[?1007;1$y\x1b[?1016;1$y\x1b[?5522;1$y",
+        "\x1b[?1007;1$y\x1b[?1016;1$y\x1b[?5522;0$y",
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
 
     write(&terminal, "\x1b[?1007;1016;5522l\x1b[?1007$p\x1b[?1016$p\x1b[?5522$p");
     try std.testing.expectEqualStrings(
-        "\x1b[?1007;2$y\x1b[?1016;2$y\x1b[?5522;2$y",
+        "\x1b[?1007;2$y\x1b[?1016;2$y\x1b[?5522;0$y",
         pendingOutput(&terminal),
     );
     try std.testing.expect(!terminal.alternateScroll());
@@ -5142,4 +5142,23 @@ test "visibility report saturation preserves previous fact and grouped mode tran
     try consumeReplies(&terminal);
     try feed(&terminal, "\x1b[?2033$p\x1b[?2048$p");
     try std.testing.expectEqualStrings("\x1b[?2033;2$y\x1b[?2048;2$y", terminal.replyBytes());
+}
+
+test "Kitty MIME paste mode request is not an advertisement of unsupported clipboard exchange" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[?5522$p");
+    try std.testing.expectEqualStrings("\x1b[?5522;0$y", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    try feed(&terminal, "\x1b[?5522h\x1b[?2004h\x1b[?5522$p");
+    try std.testing.expect(terminal.pasteEvents());
+    try std.testing.expectEqualStrings("\x1b[?5522;0$y", pendingOutput(&terminal));
+    try consumeReplies(&terminal);
+    var paste = try terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .paste = "text" });
+    defer paste.deinit();
+    try std.testing.expectEqualStrings("\x1b[200~text\x1b[201~", paste.bytes);
+    try feed(&terminal, "\x1b[?5522s\x1b[?5522l\x1b[?5522r");
+    try std.testing.expect(terminal.pasteEvents());
+    try feed(&terminal, "\x1b G\x1b[?5522$p");
+    try std.testing.expectEqualStrings("\x9b?5522;0$y", pendingOutput(&terminal));
 }

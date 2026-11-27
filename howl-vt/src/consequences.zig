@@ -903,6 +903,15 @@ pub const State = struct {
     /// Retain one valid clipboard occurrence transactionally without choosing caller access policy.
 
     // Retain one exact Kitty OSC 5522 packet for ordered caller parsing and policy.
+    /// Reports whether an ordered Kitty clipboard packet awaits caller policy.
+    pub fn hasKittyClipboard(self: *const State) bool {
+        for (0..self.clipboard_requests_count) |offset| {
+            const index = (@as(usize, self.clipboard_requests_start) + offset) % clipboard_capacity;
+            if (self.clipboard_requests[index].protocol == .kitty_5522) return true;
+        }
+        return false;
+    }
+
     /// Retains one exact Kitty clipboard packet.
     pub fn retainKittyClipboard(self: *State, payload: []const u8) Error!void {
         try ensureRetainedBound(byteCount(payload), retained_packet_bytes_max);

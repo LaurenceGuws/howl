@@ -234,7 +234,8 @@ pub const Core = struct {
     }
     // Ordered host-owned facts cannot be relieved with invented replies.
     fn hostBoundary(self: *const Core) bool {
-        return self.terminal.hasPendingProgramStatus() or self.terminal.hasPendingColorPreferenceQuery();
+        return self.terminal.hasPendingProgramStatus() or self.terminal.hasPendingColorPreferenceQuery() or
+            self.terminal.hasPendingKittyClipboard();
     }
 
     /// Retained bytes can advance without a new PTY readiness event.
@@ -438,15 +439,18 @@ fn relieveConsequencePressure(machine: *vt.Terminal) vt.Terminal.FeedError!void 
     const id = current.id();
     switch (current) {
         .program_status => return error.ConsequencePressure,
-        .clipboard => |request| if (request.kind == .query) {
-            const replied = machine.replyClipboard(id, "") catch |failure| switch (failure) {
-                // zig-audit: acknowledge unreachable
-                // reason: The retained FIFO head was just checked, so identity cannot become stale.
-                error.StaleClipboardRequest => unreachable,
-                else => |err| return err,
-            };
-            std.debug.assert(replied);
-            return;
+        .clipboard => |request| {
+            if (request.protocol == .kitty_5522) return error.ConsequencePressure;
+            if (request.kind == .query) {
+                const replied = machine.replyClipboard(id, "") catch |failure| switch (failure) {
+                    // zig-audit: acknowledge unreachable
+                    // reason: The retained FIFO head was just checked, so identity cannot become stale.
+                    error.StaleClipboardRequest => unreachable,
+                    else => |err| return err,
+                };
+                std.debug.assert(replied);
+                return;
+            }
         },
         .pointer_shape => |request| if (request.payload.len != 0 and request.payload[0] == '?') {
             machine.replyPointerShape(id, "default") catch |failure| switch (failure) {
@@ -1033,5 +1037,33 @@ test "color preference query yields before later canonical replies" {
     try std.testing.expect(core.bufferedOutputRunnable());
     try core.processBuffered(2, &synchronized);
     try std.testing.expectEqualStrings("\x1b[?997;2n\x1b[0n", core.writes.bytes[0..core.writes.count]);
+    try std.testing.expectEqual(@as(usize, 0), core.read_end);
+}
+
+test "MIME clipboard request yields before later device status reply" {
+    const allocator = std.testing.allocator;
+    const core = try allocator.create(Core);
+    defer allocator.destroy(core);
+    core.* = .{ .allocator = allocator, .transport = undefined, .terminal = undefined };
+    try vt.Terminal.initWithHistoryInto(&core.terminal, allocator, 2, 8, 0);
+    defer core.terminal.deinit();
+    const query = "\x1b]5522;type=read:id=list;Lg==\x07";
+    const tail = "\x1b[5n";
+    const bytes = query ++ tail;
+    @memcpy(core.reads[0..bytes.len], bytes);
+    core.read_end = bytes.len;
+    var synchronized: vt.Terminal.SynchronizedOutputProgress = .{};
+    try core.processBuffered(1, &synchronized);
+    try std.testing.expectEqual(query.len, core.read_start);
+    try std.testing.expectEqualStrings("", core.writes.pending());
+    try std.testing.expect(!core.readAdmissible());
+    try std.testing.expect(!core.bufferedOutputRunnable());
+    const head = core.terminal.consequenceHead().?.id();
+    try std.testing.expectError(error.ConsequencePressure, relieveConsequencePressure(&core.terminal));
+    try std.testing.expectEqual(head, core.terminal.consequenceHead().?.id());
+    try core.terminal.declineKittyClipboard(head);
+    try std.testing.expect(core.bufferedOutputRunnable());
+    try core.processBuffered(2, &synchronized);
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=EPERM:id=list\x1b\\\x1b[0n", core.writes.pending());
     try std.testing.expectEqual(@as(usize, 0), core.read_end);
 }

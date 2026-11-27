@@ -537,7 +537,7 @@ pub const Parser = struct {
         // pair boundaries. Do not normalize embedded ignored C0 bytes out
         // of its body, or let them silently transform its numeric selector.
         if (current_state == .osc_string and transition.state == current_state and transition.action == .ignore) {
-            if (self.osc.policy.class == .program_status) {
+            if (self.osc.policy.class == .program_status or self.osc.policy.class == .kitty_clipboard) {
                 const next_state, const action = self.feedActiveByte(current_state, null, byte);
                 defer self.state = next_state;
                 return self.buildPhases(current_state, next_state, action, byte, null);
@@ -2322,7 +2322,7 @@ pub const OscControl = struct {
                     self.prefix_filtered = true;
                     if (self.strictImagePacket()) self.overflowed = true;
                 }
-                if (self.policy.class == .program_status or self.strictImagePacket()) {
+                if (self.policy.class == .program_status or self.policy.class == .kitty_clipboard or self.strictImagePacket()) {
                     // A stray ESC is a malformed value byte, not an escape
                     // that quotes BEL or the next ESC in a real ST.
                     self.append(0x1B);
@@ -2384,7 +2384,7 @@ pub const OscControl = struct {
 
     fn promoteRecognizedPrefix(self: *OscControl, next_state: OscState) bool {
         self.policy = self.prefixPolicy() orelse return false;
-        if (self.policy.class == .program_status and self.prefix_filtered)
+        if ((self.policy.class == .program_status or self.policy.class == .kitty_clipboard) and self.prefix_filtered)
             self.overflowed = true;
         self.buffer.clearRetainingCapacity();
         self.prefix = .start;
