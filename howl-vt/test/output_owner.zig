@@ -2344,3 +2344,68 @@ test "DECCARA lead-only rendition repairs every scaled ink strip without mutatin
     }
     try std.testing.expectEqualDeep(lower, owner.observation().semanticView(0).cellInfoAt(1, 0));
 }
+
+test "DECCARA continuation background remains independent across history lead eviction" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 1 });
+    defer destroy(owner);
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b[38:6:10:20:30:128;4m\x1b]66;s=2;█\x07\x1b[S\x1b[2*x");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const before = held.?.snapshot;
+    const old_view = owner.observation().semanticView(1);
+    const lead = old_view.cellInfoAt(0, 0);
+    const lower = old_view.cellInfoAt(1, 0);
+    try std.testing.expectEqual(@as(u8, 0), lead.y);
+    try std.testing.expectEqual(@as(u8, 1), lower.y);
+    const lower_ink = before.glyphs[1][0];
+    const lower_deco = before.decorations[1][0];
+    const old_lead_generation = before.row_generations[0];
+    const old_lower_generation = before.row_generations[1];
+    try owner.feed("\x1b[1;2;1;2;38:6:255:0:0:0;48:6:0:255:0:64;8;24$r");
+    try owner.flush();
+    try std.testing.expectEqual(@as(usize, 0), before.backgrounds[1].len);
+    try std.testing.expectEqualDeep(lower_ink, before.glyphs[1][0]);
+    try owner.release(held.?);
+    held = null;
+    var styled = lower;
+    {
+        const next = try owner.hold();
+        defer release(owner, next);
+        const s = next.snapshot;
+        const view = owner.observation().semanticView(1);
+        try std.testing.expectEqualDeep(lead, view.cellInfoAt(0, 0));
+        try std.testing.expectEqualDeep(lower, view.cellInfoAt(1, 0));
+        styled = view.cellInfoAt(1, 1);
+        try std.testing.expectEqual(@as(u8, 1), styled.x);
+        try std.testing.expectEqual(@as(u8, 1), styled.y);
+        try std.testing.expectEqual(@as(u32, 0x4000ff00), styled.attrs.bg.value);
+        try std.testing.expectEqual(@as(u32, 0x00ff0000), styled.attrs.fg.value);
+        try std.testing.expect(styled.attrs.invisible and !styled.attrs.underline);
+        try std.testing.expectEqual(old_lead_generation, s.row_generations[0]);
+        try std.testing.expect(old_lower_generation != s.row_generations[1]);
+        try std.testing.expectEqualDeep(lower_ink, s.glyphs[1][0]);
+        try std.testing.expectEqualDeep(lower_deco, s.decorations[1][0]);
+        try std.testing.expectEqual(@as(usize, 1), s.backgrounds[1].len);
+        const bg = s.backgrounds[1][0].solid;
+        try std.testing.expectEqual(output.commands.Color{ .r = 0, .g = 255, .b = 0, .a = 64 }, bg.color);
+        try std.testing.expectEqual(@as(i32, s.cell_width), bg.rect.x);
+        try std.testing.expectEqual(s.cell_width, bg.rect.width);
+    }
+    // The one-row history capacity retires the lead, but must retain
+    // the individually edited lower background without orphaned glyph ink.
+    try owner.feed("\x1b[S");
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const evicted = try owner.hold();
+    defer release(owner, evicted);
+    try std.testing.expectEqualDeep(styled, owner.observation().semanticView(1).cellInfoAt(0, 1));
+    try std.testing.expectEqual(@as(usize, 0), evicted.snapshot.glyphs[0].len);
+    try std.testing.expectEqual(@as(usize, 0), evicted.snapshot.decorations[0].len);
+    try std.testing.expectEqual(@as(usize, 1), evicted.snapshot.backgrounds[0].len);
+    try std.testing.expectEqual(output.commands.Color{ .r = 0, .g = 255, .b = 0, .a = 64 }, evicted.snapshot.backgrounds[0][0].solid.color);
+}

@@ -6601,3 +6601,112 @@ test "Kitty DECCARA origin adds vertical offset while regional extent uses the p
     try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 2).attrs.bold);
     try std.testing.expect(!terminal.semanticView(0).cellInfoAt(1, 0).attrs.bold);
 }
+
+test "Kitty DECCARA distinguishes trailing separators from admitted empty reset selectors" {
+    const cases = [_]struct { suffix: []const u8, reset: bool, all: bool = false }{
+        .{ .suffix = "1;1;1;1;", .reset = false },
+        .{ .suffix = "1;1;1;1;;", .reset = true },
+        .{ .suffix = "1;1;1;1;0;", .reset = true },
+        .{ .suffix = "1;1;1;1;3;;", .reset = true },
+        .{ .suffix = ";;;;", .reset = false },
+        .{ .suffix = ";;;;;", .reset = true, .all = true },
+        .{ .suffix = "", .reset = true, .all = true },
+        .{ .suffix = "1;1;1;1;999;", .reset = false },
+    };
+    for (cases) |case| for ([_][]const u8{ "\x1b[", "\x9b" }) |intro| {
+        var bytes: [96]u8 = undefined;
+        const wire = try std.fmt.bufPrint(&bytes, "{s}{s}$r", .{ intro, case.suffix });
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[1;2;31;44;4:3;9mAB\x1b[2;1H");
+            const before = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+            const revision = terminal.semanticSequence();
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            const view = terminal.semanticView(0);
+            try std.testing.expectEqualDeep(if (case.reset) Terminal.default_cell_attrs else before, view.cellInfoAt(0, 0).attrs);
+            try std.testing.expectEqualDeep(if (case.all) Terminal.default_cell_attrs else before, view.cellInfoAt(0, 1).attrs);
+            try std.testing.expectEqual(case.reset, revision != terminal.semanticSequence());
+            try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+            try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+            try feed(&terminal, "Z");
+            try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(1, 0).attrs);
+        }
+    };
+}
+
+test "shared SGR and DECCARA consume complete colon groups without leaking selectors" {
+    const cases = [_]struct {
+        sgr: []const u8,
+        bold: bool = false,
+        italic: bool = false,
+        underline: ?Terminal.UnderlineStyle = null,
+        bg: u8 = 4,
+    }{
+        .{ .sgr = "4:3:5;3", .italic = true, .underline = .curly },
+        .{ .sgr = "4:5:0:7", .underline = .dashed },
+        .{ .sgr = "1:7:5", .bold = true },
+        .{ .sgr = "999:0:7;3", .italic = true },
+        .{ .sgr = "38;99:0:7;3", .italic = true },
+        .{ .sgr = "48;5;42:5;3", .bg = 42, .italic = true },
+        .{ .sgr = "38:99:0:7;3", .italic = true },
+        .{ .sgr = "4:9:0:5;3", .italic = true },
+    };
+    for (cases) |case| for ([_][]const u8{ "\x1b[", "\x9b" }) |intro| for ([_]bool{ false, true }) |regional| {
+        var bytes: [128]u8 = undefined;
+        const wire = if (regional)
+            try std.fmt.bufPrint(&bytes, "{s}1;1;1;1;{s}$r", .{ intro, case.sgr })
+        else
+            try std.fmt.bufPrint(&bytes, "{s}{s}m", .{ intro, case.sgr });
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+            defer terminal.deinit();
+            try feed(&terminal, "\x1b[2;31;44;9mA");
+            const before = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            try feed(&terminal, "B");
+            const view = terminal.semanticView(0);
+            var expected = before;
+            expected.bold = case.bold;
+            expected.italic = case.italic;
+            expected.underline = case.underline != null;
+            expected.underline_style = case.underline orelse .straight;
+            expected.bg = .indexed(case.bg);
+            try std.testing.expectEqualDeep(expected, view.cellInfoAt(0, if (regional) 0 else 1).attrs);
+            try std.testing.expectEqualDeep(before, view.cellInfoAt(0, if (regional) 1 else 0).attrs);
+        }
+    };
+}
+
+test "DECCARA uses addressable character columns on DEC double width and height rows" {
+    for ([_][]const u8{ "\x1b#6", "\x1b#3", "\x1b#4" }) |geometry| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        try feed(&terminal, geometry);
+        try feed(&terminal, "ABCD\x1b[2;1Habcdefgh\x1b[3;1H\x1b[2*x");
+        const initial = terminal.semanticView(0);
+        const row_geometry = initial.lineGeometry(0);
+        var before: [8]Terminal.Cell = undefined;
+        for (&before, 0..) |*cell, col| cell.* = initial.cellInfoAt(0, @intCast(col));
+        const seq = terminal.semanticSequence();
+        try std.testing.expect(!(try terminal.feed("\x1b[1;5;1;8;44$r")).stateChanged());
+        try std.testing.expectEqual(seq, terminal.semanticSequence());
+        try feed(&terminal, "\x1b[1;3;2;8;48:6:1:2:3:128$r");
+        const after = terminal.semanticView(0);
+        try std.testing.expectEqual(row_geometry, after.lineGeometry(0));
+        for (before, 0..) |cell, col| {
+            var expected = cell;
+            if (col >= 2 and col < 4) expected.attrs.bg = .rgba(.{ .r = 1, .g = 2, .b = 3, .a = 128 });
+            try std.testing.expectEqualDeep(expected, after.cellInfoAt(0, @intCast(col)));
+            try std.testing.expectEqual(if (col >= 2) Terminal.Color.rgba(.{ .r = 1, .g = 2, .b = 3, .a = 128 }) else Terminal.default_cell_attrs.bg, after.cellInfoAt(1, @intCast(col)).attrs.bg);
+        }
+        try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), after.cursor_col);
+        // Hidden backing slots must not reveal new rendition when #5
+        // restores single-width geometry.
+        try feed(&terminal, "\x1b[1;1H\x1b#5");
+        for (4..8) |col| try std.testing.expectEqualDeep(before[col], terminal.semanticView(0).cellInfoAt(0, @intCast(col)));
+    }
+}

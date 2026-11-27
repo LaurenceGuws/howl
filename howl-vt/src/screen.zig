@@ -2156,7 +2156,11 @@ pub const Screen = struct {
             if (row <= bounds.bottom) {
                 const row_start = self.rowStart(row);
                 const start_col = if (self.attr_change_extent_rect or row == bounds.top) bounds.left else 0;
-                const end_col = if (self.attr_change_extent_rect or (row == bounds.bottom and region.ends_in_page)) bounds.right else self.cols -| 1;
+                const requested_end = if (self.attr_change_extent_rect or (row == bounds.bottom and region.ends_in_page)) bounds.right else self.cols -| 1;
+                // DEC double-width/height rows expose character columns,
+                // not the inaccessible backing slots beyond their extent.
+                // Keep DECRARA's separate, existing coordinate policy.
+                const end_col = if (reverse) requested_end else @min(requested_end, self.lineColumnCount(row) - 1);
                 var col = start_col;
                 while (col <= end_col) : (col += 1) {
                     const cell = &cells[@intCast(row_start + @as(u32, col))];
@@ -3746,6 +3750,10 @@ pub const Screen = struct {
                         58 => applyExtendedColor(target, operands, &idx, "underline_color"),
                         else => applyBasicSgr(target, param),
                     }
+                    // The remaining colon subparameters belong to this
+                    // selector, even if it used only its first value or
+                    // is unsupported. Only semicolons start a new SGR.
+                    while (idx + 1 < param_len and operands.colonAfter(idx)) idx += 1;
                 }
             }
 

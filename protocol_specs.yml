@@ -20701,6 +20701,18 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: rectangle rendition preserves complete wide and sized character ownership'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Kitty DECCARA distinguishes trailing separators from admitted empty reset selectors
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: shared SGR and DECCARA consume complete colon groups without leaking selectors
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: DECCARA uses addressable character columns on DEC double width and height rows
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: DECCARA continuation background remains independent across history lead eviction
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_deccara_01:
           scope: 'Existing shared SGR patch and accepted bare/coordinate-only/zero distinction retained. Originating Kitty
@@ -20722,6 +20734,29 @@ specifications:
             kitty/screen.c select_graphic_rendition, kitty/vt-parser.c _parse_sgr, kitty_tests/parser.py test_deccara; deterministic
             VT and output-owner red-green; no blanket FULL promotion
           baseline: 082f8b554ece4ff159f3c6cdf5c2fa8f67a30365
+        howl_qualification_20261127_deccara_02:
+          scope: 'Pinned author CSI commit_csi_param/_parse_sgr and cursor.c grouped rendition behavior: a final separator
+            alone adds no selector, an empty field terminated by another semicolon is admitted as zero. Existing bare reset,
+            coordinate-only no-op and explicit reset decisions unchanged; every split of eight omission/reset/invalid-only
+            cases in both CSI profiles preserves independent write rendition and cursor. Shared SGR decoder consumes remaining
+            owned colon subparameters after a supported or unsupported selector, preventing surplus underline/basic/unknown-colour
+            values from escaping as independent SGR. Eight selected groups tested through ordinary SGR and DECCARA at every
+            split in both profiles. Existing first-value and colour clamping policy retained; this is local bounded recovery
+            rather than complete author malformed-sequence equivalence. DECCARA respects addressable character columns on
+            DEC double-width and double-height rows (original DEC indexed character-position semantics); clips selected span
+            to visible row extent, leaves wholly nonaddressable backing slots untouched, preserves line geometry and cursor;
+            reverse owner unchanged. Actual output-owner history test uses a sized cluster crossing the live/cold boundary:
+            continuation-only edit retains independent RGBA background, foreground and concealment facts, archived lead immutable,
+            ink/decorations remain lead-owned, one-row history eviction retires orphaned ink but retains exact edited continuation
+            background. Held snapshot, row generations and complete retained attribute equality verified. No new storage,
+            allocation or parser capacity. Initial extended DECCARA qualification complete at these scoped boundaries; combined
+            DEC margin/line geometry, all malformed shared SGR syntax, full per-cell scaled ink semantics and physical/remote
+            rendering not exhaustively proved.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/deccara.rst SHA256 700d97077b7ff209f35a17651d4534ff2281669b4d70248a21083acf7218d605,
+            kitty/vt-parser.c commit_csi_param/csi_parse_loop/_parse_sgr and kitty/cursor.c grouped cursor_from_sgr/apply_sgr_to_cells;
+            existing original DEC STD070 character-column rule; deterministic split/geometry red-green and output-owner positive
+            history proof; no blanket FULL promotion
+          baseline: 17d4c209e7bccf63a4f54e6c815d3649cd718186
   kitty_underlines:
     title: Kitty colored and styled underlines
     author: Kovid Goyal / kitty
@@ -20778,6 +20813,16 @@ specifications:
             and kitty/shaders/cell.slang effective_text_alpha; deterministic output-owner/shared red-green and atlas coverage/phase
             proofs; local geometry and resource bounds stated, no blanket FULL promotion
           baseline: e09393d868f4fbd9c18e8341335ea3589d679a82
+        howl_qualification_20261127_deccara_02:
+          scope: Shared SGR/DECCARA grouped decoder prevents surplus colon operands after a valid or invalid underline style
+            from becoming basic rendition setters. Selected curly/dashed and out-of-range groups across every split of both
+            CSI profiles, ordinary and regional routes. Existing first-style and out-of-range no-op policy retained; not exhaustive
+            malformed grammar equivalence.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/deccara.rst SHA256 700d97077b7ff209f35a17651d4534ff2281669b4d70248a21083acf7218d605,
+            kitty/vt-parser.c commit_csi_param/csi_parse_loop/_parse_sgr and kitty/cursor.c grouped cursor_from_sgr/apply_sgr_to_cells;
+            existing original DEC STD070 character-column rule; deterministic split/geometry red-green and output-owner positive
+            history proof; no blanket FULL promotion
+          baseline: 17d4c209e7bccf63a4f54e6c815d3649cd718186
       test_locations:
       - file: howl-vt/test/unit/terminal_test.zig
         test: Kitty underline styles and colour lifetime survive every wire split and both C1 profiles
@@ -20808,6 +20853,9 @@ specifications:
         relation: protocol-family
       - file: howl-vt/test/output_shared.zig
         test: automatic row limit is independent of replacement font width
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: shared SGR and DECCARA consume complete colon groups without leaking selectors
         relation: protocol-family
     - id: color
       section: lines 22-27
