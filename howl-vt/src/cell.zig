@@ -217,16 +217,60 @@ pub fn isSemanticWideCell(value: Cell) bool {
         value.height == 1 and value.x < 2 and value.y == 0;
 }
 
-/// Compares every attribute value without inspecting object padding.
-pub fn attrsEqual(left: *const CellAttrs, right: *const CellAttrs) bool {
-    inline for (@typeInfo(CellAttrs).@"struct".field_names, @typeInfo(CellAttrs).@"struct".field_types) |field_name, field_type| {
-        const a = @field(left.*, field_name);
-        const b = @field(right.*, field_name);
-        if (field_type == Color) {
-            if (a.kind != b.kind or a.value != b.value) return false;
-        } else if (a != b) return false;
-    }
-    return true;
+comptime {
+    std.debug.assert(@sizeOf(CellAttrs) == 44);
+    std.debug.assert(@sizeOf(Color) == 8);
+    std.debug.assert(@offsetOf(Color, "kind") == 4);
+    std.debug.assert(@offsetOf(Color, "value") == 0);
+    std.debug.assert(@offsetOf(CellAttrs, "fg") == 0);
+    std.debug.assert(@offsetOf(CellAttrs, "bg") == 8);
+    std.debug.assert(@offsetOf(CellAttrs, "underline_color") == 16);
+    std.debug.assert(@offsetOf(CellAttrs, "link_id") == 24);
+    std.debug.assert(@offsetOf(CellAttrs, "font") == 28);
+    std.debug.assert(@offsetOf(CellAttrs, "baseline") == 29);
+    std.debug.assert(@offsetOf(CellAttrs, "bold") == 30);
+    std.debug.assert(@offsetOf(CellAttrs, "dim") == 31);
+    std.debug.assert(@offsetOf(CellAttrs, "italic") == 32);
+    std.debug.assert(@offsetOf(CellAttrs, "blink") == 33);
+    std.debug.assert(@offsetOf(CellAttrs, "blink_fast") == 34);
+    std.debug.assert(@offsetOf(CellAttrs, "reverse") == 35);
+    std.debug.assert(@offsetOf(CellAttrs, "invisible") == 36);
+    std.debug.assert(@offsetOf(CellAttrs, "underline") == 37);
+    std.debug.assert(@offsetOf(CellAttrs, "strikethrough") == 38);
+    std.debug.assert(@offsetOf(CellAttrs, "underline_style") == 39);
+    std.debug.assert(@offsetOf(CellAttrs, "protected") == 40);
+    std.debug.assert(@offsetOf(CellAttrs, "shadow") == 41);
+    std.debug.assert(@offsetOf(CellAttrs, "enclosure") == 42);
+}
+
+/// Transient semantic comparison words, never stored in a cell or row.
+pub const AttrKey = [5]u64;
+
+/// Selects all and only the value bits in the canonical attribute layout.
+/// Three color padding bytes supply space for the final style fields.
+pub inline fn attrsKey(attrs: *const CellAttrs) AttrKey {
+    const bytes = std.mem.asBytes(attrs);
+    const color_mask: u64 = 0x0000_00ff_ffff_ffff;
+    return .{
+        std.mem.readInt(u64, bytes[0..8], .little) & color_mask,
+        std.mem.readInt(u64, bytes[8..16], .little) & color_mask,
+        (std.mem.readInt(u64, bytes[16..24], .little) & color_mask) |
+            (@as(u64, std.mem.readInt(u32, bytes[40..44], .little) & 0x0003_0103) << 40),
+        std.mem.readInt(u64, bytes[24..32], .little) & 0x0101_030f_ffff_ffff,
+        std.mem.readInt(u64, bytes[32..40], .little) & 0x0701_0101_0101_0101,
+    };
+}
+
+/// Compares semantic attribute words without branching on individual fields.
+pub inline fn attrKeysEqual(left: AttrKey, right: AttrKey) bool {
+    var difference: u64 = 0;
+    inline for (0..left.len) |i| difference |= left[i] ^ right[i];
+    return difference == 0;
+}
+
+/// Compares every attribute value without comparing object padding.
+pub inline fn attrsEqual(left: *const CellAttrs, right: *const CellAttrs) bool {
+    return attrKeysEqual(attrsKey(left), attrsKey(right));
 }
 
 /// Compares every cell value, including inactive scalar slots and rare placement fields.
