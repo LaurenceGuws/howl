@@ -8,7 +8,7 @@ const host_status = @import("program_status.zig");
 const clipboard_limit = 1024 * 1024;
 
 /// Only the exact VT reply/consume failures and a bounded clipboard allocation may escape.
-pub const Error = vt.Terminal.ConsumeConsequenceError || vt.Terminal.ClipboardReplyError ||
+pub const Error = vt.Terminal.ConsumeConsequenceError || vt.Terminal.KittyReadReplyError ||
     vt.Terminal.PointerShapeReplyError || vt.Terminal.ColorPreferenceReplyError ||
     vt.Terminal.ContainerReplyError || error{ OutOfMemory, StaleClipboardRequest, StaleContainerRequest, ContainerReplyMismatch };
 

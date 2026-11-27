@@ -26,6 +26,12 @@ pub const ClipboardRequestKind = enum { set, query, packet };
 /// Identifies the protocol governing one clipboard payload.
 pub const ClipboardProtocol = enum { osc52, kitty_5522 };
 
+/// A started read retains only its requested MIME ordinal and open-group bit.
+pub const KittyReadCursor = struct {
+    next_mime: u16 = 0,
+    open: bool = false,
+};
+
 /// Borrows one retained clipboard occurrence until owner mutation.
 pub const ClipboardRequestView = struct {
     /// Monotonic identity advancing for every accepted operation, including repeated bytes.
@@ -38,6 +44,8 @@ pub const ClipboardRequestView = struct {
     kind: ClipboardRequestKind,
     /// Identifies the framing and semantics governing `payload`.
     protocol: ClipboardProtocol,
+    /// True after OK until the exact selected read completes or resets.
+    read_started: bool = false,
 };
 
 /// Reports allocation failure, one intrinsically invalid retained bound, or
@@ -465,6 +473,8 @@ pub const State = struct {
     clipboard_requests_start: u8 = 0,
     clipboard_requests_count: u8 = 0,
     clipboard_retained_bytes: u32 = 0,
+    // Only the exact global FIFO head can own a started read.
+    kitty_read: ?KittyReadCursor = null,
     notifications: [notification_capacity]NotificationOwned = undefined,
     notifications_start: u8 = 0,
     notifications_count: u8 = 0,
@@ -539,8 +549,13 @@ pub const State = struct {
         }
     }
 
-    /// Records a terminal reset without discarding previously retained occurrences.
+    /// Records a reset, cancelling an already authorized read. Unstarted
+    /// occurrences and previously admitted reply bytes retain their old policy.
     pub fn resetTerminal(self: *State) void {
+        if (self.kitty_read != null) {
+            std.debug.assert(self.head().?.generation() == self.clipboardRequestHead().?.generation);
+            self.consumeClipboardRequest();
+        }
         self.terminal_reset_generation = std.math.add(u64, self.terminal_reset_generation, 1) catch
             // zig-audit: acknowledge panic
             // reason: This process-lifetime identity/revision space is deliberately non-wrapping; exhaustion is an unrecoverable invariant breach.
@@ -900,9 +915,6 @@ pub const State = struct {
         self.legacy_controls_count -= 1;
     }
 
-    /// Retain one valid clipboard occurrence transactionally without choosing caller access policy.
-
-    // Retain one exact Kitty OSC 5522 packet for ordered caller parsing and policy.
     /// Reports whether an ordered Kitty clipboard packet awaits caller policy.
     pub fn hasKittyClipboard(self: *const State) bool {
         for (0..self.clipboard_requests_count) |offset| {
@@ -1030,7 +1042,9 @@ pub const State = struct {
     /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet.
     fn pendingClipboardRequest(self: *const State) ?ClipboardRequestView {
         const request = self.clipboardRequestHead() orelse return null;
-        return request.view();
+        var result = request.view();
+        result.read_started = self.kitty_read != null;
+        return result;
     }
 
     fn clipboardRequestHead(self: *const State) ?*const ClipboardRequestOwned {
@@ -1045,6 +1059,7 @@ pub const State = struct {
         const request_len = byteCount(request.raw);
         std.debug.assert(request_len <= self.clipboard_retained_bytes);
         self.clipboard_retained_bytes -= request_len;
+        self.kitty_read = null;
         self.allocator.free(request.raw);
         self.clipboard_requests_start = (self.clipboard_requests_start + 1) % clipboard_capacity;
         self.clipboard_requests_count -= 1;

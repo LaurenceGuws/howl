@@ -12510,6 +12510,24 @@ specifications:
       - file: howl-app/src/pty_vt.zig
         test: MIME clipboard request yields before later device status reply
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read begin and data allocation failure preserve exact response state
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read bounds and completion pressure retain the started request until retry
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read inventory bounds and RIS revoke only the started transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
@@ -12521,6 +12539,17 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Selected caller-owned positive read steps reuse the bounded packet FIFO, strict start grammar and one shared
+            positive/negative response serializer. Inspect decodes requested MIME names into caller-owned scratch; begin/data/list/done
+            or opening error serialize complete seven-bit OSC packets before progress/identity mutation. Only one active FIFO-head
+            MIME ordinal/open-group cursor retained, no retained clipboard data beyond existing reply bytes. No OS clipboard access
+            or full protocol support.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12541,6 +12570,18 @@ specifications:
       - file: howl-app/src/pty_vt.zig
         test: MIME clipboard request yields before later device status reply
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read inventory bounds and RIS revoke only the started transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Current application policy declines all selected valid read starts, including MIME listing, with EPERM; malformed
@@ -12551,6 +12592,17 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Selected valid read request exposes decoded whitespace-separated requested MIME types and exact clipboard/primary
+            location. Caller authorizes begin with matching location; unrequested types and switching away from an open MIME group
+            reject. Unavailable ordinary requested types may be skipped in order; duplicate request names may be served in their
+            original order. Period requests require typed inventory response; no actual MIME availability discovery, permission
+            UI or token policy.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: write
       section: Writing data to the system clipboard
       level: defined
@@ -12663,6 +12715,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_osc_test.zig
         test: Kitty clipboard refusal preserves exact FIFO head and replies under pressure
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read bounds and completion pressure retain the started request until retry
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected read/write denial replies echo only allowed ASCII id characters, omit id when sanitized empty, use bounded
@@ -12673,6 +12734,15 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Shared reply serializer preserves sanitized routing ID on OK, every DATA chunk and DONE or an opening failure;
+            primary loc appears only on OK. Exact synthetic multi-packet and pressure retry proofs. No positive write or unsolicited
+            paste-event ID semantics claimed.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: mime-alias
       section: docs/clipboard.rst:162-173
       level: defined
@@ -12693,6 +12763,12 @@ specifications:
       - file: howl-app/src/consequences.zig
         test: unsupported MIME clipboard policy returns routed errors without granting host access
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Preserve malformed encoded bytes at transport boundary, validate padded standard Base64 and UTF8 for complete
@@ -12703,6 +12779,16 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Positive read path reuses strict complete padded Base64 and UTF8 start validation. Malformed/noncanonical Base64,
+            invalid UTF8/control/empty requested list, invalid location or ambiguous metadata cannot start a positive reply. Binary
+            DATA chunks encoded separately with standard padding and independently decoded in the long-stream proof. Write fragment
+            concatenation and aliases remain separate.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: read-response
       section: docs/clipboard.rst:47-102
       level: defined
@@ -12724,6 +12810,21 @@ specifications:
       - file: howl-app/src/pty_vt.zig
         test: MIME clipboard request yields before later device status reply
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read begin and data allocation failure preserve exact response state
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read bounds and completion pressure retain the started request until retry
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read inventory bounds and RIS revoke only the started transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected negative EPERM branch serializes exact seven-bit Kitty OSC5522 response with sanitized id and consumes
@@ -12734,6 +12835,20 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Caller-approved read supports opening OK then sequential DATA groups and DONE; ENOSYS/EPERM/EBUSY only before
+            OK. Binary chunks <=4096 decoded bytes, empty final DATA allowed (no payload delimiter per selected author serializer);
+            inventory constructed from bounded MIME names with whitespace separator/newline, including empty inventory. Real 69635-byte
+            synthetic text/plain stream plus image/png chunk crosses 64KiB retained reply queue with exact retry and no duplicate
+            data. Reject wrong head/location/order, unrequested data, oversized/empty nonfinal chunks and premature completion;
+            begin/data allocation failures and DATA/DONE reply pressure preserve exact cursor/head. Started read cannot be silently
+            consumed or declined; RIS retires only that transfer, preserves queued reply bytes and other unstarted requests. No
+            OS read grant, C API streaming helper, actual paste events or full wire matrix.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: write-data
       section: docs/clipboard.rst:105-160
       level: defined
@@ -24667,6 +24782,23 @@ specifications:
       wire: MIME-list payload
       rule: Decode Base64 MIME-list and split on ASCII whitespace, ignoring leading/trailing whitespace; never depend on final
         newline.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read inventory bounds and RIS revoke only the started transfer
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Selected solicited period-list reply builds ASCII-whitespace-separated MIME tokens from caller-supplied inventory,
+            newline at each nonempty chunk boundary, <=4096 decoded bytes. Empty inventory still has DATA mime=Lg==; invalid token/oversized
+            list reject. No unsolicited paste event or actual clipboard listing yet.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: read
       section: Paste Notification Format
       level: defined
@@ -24679,6 +24811,26 @@ specifications:
       relations:
       - kind: extends
         clause: kitty_clipboard.read
+      test_locations:
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: Underlying caller-approved read path serializes requested available MIME data and skips unavailable types, preserves
+            same requested clipboard location at begin, and bounds chunks to4096 decoded bytes. This is solicited synthetic data,
+            not password-authorized paste retrieval. No token or host permission added.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
     - id: precedence
       section: Paste Behavior; Implementation Notes
       level: defined
@@ -24725,6 +24877,12 @@ specifications:
       - file: howl-app/src/pty_vt.zig
         test: MIME clipboard request yields before later device status reply
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_osc_test.zig
+        test: Kitty read inventory bounds and RIS revoke only the started transfer
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Selected host policy grants no read, write or token authorization; valid listing/read requests explicitly denied
@@ -24735,6 +24893,16 @@ specifications:
             Existing rockorager_paste source clauses retain author snapshot provenance. Actual VT/app red-green and bounded negative-path/chronology
             proofs; no clipboard permission or full exchange claim.
           baseline: fd0a8d68c62dbfd67b240bad7b2299c89c592af7
+        howl_qualification_20261127_kitty_clipboard_02:
+          scope: No OS clipboard path invoked. Positive response explicitly selected by embedding caller with matching request
+            location and MIME order; typed inventory excludes ordinary DATA payload for period requests. Started read revokes
+            at RIS; already queued bytes are not a secure erase. Actual location snapshot, authorization, token and user gesture
+            policy remain host responsibility.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+            lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+            caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+            tests with synthetic caller data, no OS clipboard access.
+          baseline: 9e15d05725892531f0087cfbd72c114931a547ac
   iterm2_current:
     title: iTerm2 current proprietary escape-code additions and changed profiles
     author: iTerm2 project
@@ -41601,12 +41769,13 @@ reconciliation:
     - file: howl-app/src/pty_vt.zig
       test: MIME clipboard request yields before later device status reply
       relation: protocol-family
-    verified_subset: Exact malformed payload transport, filtered selector rejection, valid and invalid selected start
-      refusal with safe routing id, no host clipboard result, FIFO identity and allocation/reply failure recovery, 7-bit
-      status framing, ordered host boundary, unsupported DECRPM and ordinary DEC2004 fallback.
-    boundary: Only negative/caller refusal and selected transport/detection are qualified. Positive MIME listing/read
-      response, transactional writes and alias data, minimum64MB, clipboard loc/permissions/UI, one-use password, supported
-      paste event precedence, native C typed status helper and full malformed/capture/host integration remain open.
+    verified_subset: Exact malformed payload transport, filtered selector rejection, valid and invalid selected start refusal
+      with safe routing id, no host clipboard result, FIFO identity and allocation/reply failure recovery, 7-bit status
+      framing, ordered host boundary, unsupported DECRPM and ordinary DEC2004 fallback.
+    boundary: Initial negative/caller refusal and selected transport/detection assessment. Caller-supplied positive MIME
+      response is separately assessed by kitty-clipboard-caller-read-stream. Actual host listing/read/write, transaction
+      and alias data, minimum64MB, permission/UI, one-use password, supported paste precedence, native C typed helpers and
+      full integration remain open.
     not_full_because: No complete OSC5522 or paste-event exchange, real host permission/data path or positive capability
       advertisement implemented.
   applies_to:
@@ -41626,4 +41795,83 @@ reconciliation:
     - rockorager_paste.precedence
     - rockorager_paste.security
     scope: Initial bounded negative/refusal and detection slice; no underlying permission grant or full exchange selection.
+- id: kitty-clipboard-caller-read-stream
+  status: resolved-by-scoped-source-selection
+  decision_rule: originating-read-response-and-bounded-caller-ownership
+  operator_alignment: '2026-11-27: operator approved wave02 caller-owned positive read response using synthetic MIME data.
+    No real host clipboard permission granted.'
+  accepted_interpretation:
+    effect: Inspect exact retained read into caller scratch. Caller explicitly selects matching clipboard location and
+      begin or opening ENOSYS/EPERM/EBUSY. Serialize OK, DATA chunks at most4096 decoded bytes and DONE through one shared
+      positive/negative response owner; sanitize id on every packet and include loc=primary only on OK. Validate each
+      DATA MIME against request order; caller may skip unavailable ordinary types, but must finish open group and supply
+      typed period inventory before skipping/finishing it. Typed inventory chunks join valid nonempty tokens by ASCII
+      whitespace with trailing newline; empty final DATA has no payload delimiter. Caller owns data snapshot, transport
+      scheduling and successful-step progress; VT retains only one active FIFO-head MIME ordinal/open bit plus existing
+      request/reply bytes. Failed steps are atomic; do not decline or consume a started request. RIS cancels that started
+      transfer while preserving previously admitted reply bytes and other unstarted occurrences. App refusal and unsupported5522
+      advertisement unchanged. No new C ABI or permission/token grant.
+  selects:
+    kitty.clipboard.caller-read-stream: effect
+  reason: Author requires ordered MIME data chunks no more than4096 decoded bytes, padded individually, opening status
+    and sanitized routing. A whole clipboard reply can exceed the bounded64KiB reply queue; incremental caller-owned steps
+    avoid copying clipboard inventory into VT or enlarging the queue. Explicit caller location/mime admission and typed
+    listing keep host policy above VT. RIS cancellation, strict known-start grammar and empty DATA spelling are scoped
+    implementation choices; no real clipboard data obtained.
+  evidence_basis: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9
+    lines12-45,50-102,242-252; kitty/clipboard.py224-248,624-682. Existing Rockorager clause provenance retained. New
+    caller-owned positive read API absent at baseline; compile-negative proof then deterministic wire and response-stage
+    tests with synthetic caller data, no OS clipboard access.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected caller-owned positive and opening-error MIME read response stream
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-vt/src/clipboard.zig:inspectKittyRead
+    - howl-vt/src/clipboard.zig:appendKittyRead
+    - howl-vt/src/clipboard.zig:appendKittyResponse
+    - howl-vt/src/consequences.zig:State
+    - howl-vt/src/terminal.zig:replyKittyClipboardRead
+    tests:
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty read listing uses typed MIME names and permits only opening failure statuses
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty read validation rejects malformed requests and wrong FIFO heads without replies
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty read begin and data allocation failure preserve exact response state
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty read bounds and completion pressure retain the started request until retry
+      relation: protocol-family
+    - file: howl-vt/test/unit/terminal_osc_test.zig
+      test: Kitty read inventory bounds and RIS revoke only the started transfer
+      relation: protocol-family
+    verified_subset: Synthetic 69635-byte text stream plus binary image/png data over 64KiB reply queue, exact independently
+      decoded chunk bytes and order, routed OK/DATA/DONE and opening errors, typed listing including empty and exact4096
+      boundary, malformed/wrong-head/location/order/size rejection, allocation and reply pressure retry, active-head consumption
+      protection and RIS revocation.
+    boundary: Caller supplies data and permission; no actual host clipboard reads, native C positive helper, actual MIME
+      availability/permission UI, complete request metadata and all allocation/framing combinations, transactional writes,
+      aliases or paste token/precedence. Direct caller must service the pending read before later reply-generating input;
+      app continues to decline all MIME access.
+    not_full_because: Selected positive read wire machinery is qualified with synthetic caller data, not the full clipboard
+      exchange, real host data access or supported paste event contract.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.read
+    - kitty_clipboard.mux-id
+    - kitty_clipboard.base64-admission
+    - kitty_clipboard.read-response
+    - rockorager_paste.mime-list
+    - rockorager_paste.read
+    - rockorager_paste.security
+    scope: Selected solicited caller-supplied MIME response steps; no host access or capability advertisement grant.
 pending_reconciliation: []

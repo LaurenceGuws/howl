@@ -108,11 +108,39 @@ pub fn appendQueryReply(
     try output.appendString(.terminal, .osc, payload);
 }
 
+/// The two distinct caller-owned clipboard locations.
+pub const KittyLocation = enum { clipboard, primary };
+
+/// Caller scratch for decoding the bounded request, never clipboard storage.
+pub const KittyReadScratch = [consequences.retained_packet_bytes_max]u8;
+/// Borrows decoded requested MIME names from caller scratch.
+pub const KittyReadRequest = struct {
+    location: KittyLocation,
+    mime_types: []const u8,
+};
+/// One atomic response step. Caller owns all data and retries only the
+/// step rejected by reply pressure or allocation failure.
+pub const KittyReadReply = union(enum) {
+    begin: KittyLocation,
+    data: struct { mime: []const u8, bytes: []const u8, last: bool },
+    list: struct { names: []const []const u8, last: bool },
+    done,
+    unavailable,
+    denied,
+    busy,
+};
+/// An invalid caller response cannot change the admitted stream.
+pub const KittyReadError = replies.AppendError || error{InvalidClipboardResponse};
+const max_read_chunk = 4096;
+const mime_whitespace = " \t\r\n\x0b\x0c";
 const KittyOperation = enum { read, write };
+const KittyStatus = enum { OK, DATA, DONE, ENOSYS, EPERM, EBUSY, EINVAL };
 const KittyStart = struct {
     kind: KittyOperation,
     id: []const u8,
     valid: bool,
+    location: KittyLocation,
+    mime_types: []const u8,
 };
 
 // Validate complete encoded strings without repairing malformed wire bytes.
@@ -132,7 +160,7 @@ fn encodedText(data: []const u8, scratch: []u8) ?[]const u8 {
 // Classify only unambiguous known start metadata. A malformed structural
 // envelope cannot supply a reliable routing identity; ignore it. A recognized
 // write with invalid encoded metadata or unexpected data gets EINVAL.
-fn kittyStart(raw: []const u8) ?KittyStart {
+fn kittyStart(raw: []const u8, scratch: *KittyReadScratch) ?KittyStart {
     const separator = std.mem.indexOfScalar(u8, raw, ';') orelse raw.len;
     const data = if (separator == raw.len) "" else raw[separator + 1 ..];
     var fields = std.mem.splitScalar(u8, raw[0..separator], ':');
@@ -140,7 +168,7 @@ fn kittyStart(raw: []const u8) ?KittyStart {
     var id: []const u8 = "";
     var seen: u8 = 0;
     var valid = true;
-    var scratch: [consequences.retained_packet_bytes_max]u8 = undefined;
+    var location: KittyLocation = .clipboard;
     while (fields.next()) |field| {
         const equals = std.mem.indexOfScalar(u8, field, '=') orelse return null;
         const key = field[0..equals];
@@ -152,13 +180,16 @@ fn kittyStart(raw: []const u8) ?KittyStart {
             id = value;
             break :blk 1;
         } else if (std.mem.eql(u8, key, "loc")) blk: {
-            if (!std.mem.eql(u8, value, "primary")) valid = false;
+            if (std.mem.eql(u8, value, "primary"))
+                location = .primary
+            else
+                valid = false;
             break :blk 2;
         } else if (std.mem.eql(u8, key, "name")) blk: {
-            if (encodedText(value, &scratch) == null) valid = false;
+            if (encodedText(value, scratch) == null) valid = false;
             break :blk 3;
         } else if (std.mem.eql(u8, key, "pw")) blk: {
-            if (encodedText(value, &scratch) == null) valid = false;
+            if (encodedText(value, scratch) == null) valid = false;
             break :blk 4;
         } else return null;
         const bit = @as(u8, 1) << slot;
@@ -166,11 +197,12 @@ fn kittyStart(raw: []const u8) ?KittyStart {
         seen |= bit;
     }
     const operation = kind orelse return null;
+    var mime_types: []const u8 = "";
     switch (operation) {
         .read => {
-            const decoded = encodedText(data, &scratch) orelse return null;
-            if (std.mem.trim(u8, decoded, " \t\r\n\x0b\x0c").len == 0) return null;
-            for (decoded) |byte| {
+            mime_types = encodedText(data, scratch) orelse return null;
+            if (std.mem.trim(u8, mime_types, mime_whitespace).len == 0) return null;
+            for (mime_types) |byte| {
                 if ((byte < 0x20 and !std.ascii.isWhitespace(byte)) or byte == 0x7f) return null;
             }
         },
@@ -178,23 +210,27 @@ fn kittyStart(raw: []const u8) ?KittyStart {
             valid = false;
         },
     }
-    return .{ .kind = operation, .id = id, .valid = valid };
+    return .{ .kind = operation, .id = id, .valid = valid, .location = location, .mime_types = mime_types };
 }
 
-/// Serializes the caller's refusal of an OSC 5522 packet. No clipboard
-/// data, permission token, or host action is accepted. Invalid reads and
-/// unassociated write continuations are silent; valid starts receive EPERM.
-/// The original packet is bounded by the canonical consequence owner.
-pub fn appendKittyRefusal(output: *replies.Buffer, raw: []const u8) replies.AppendError!void {
-    std.debug.assert(raw.len <= consequences.retained_packet_bytes_max);
-    const request = kittyStart(raw) orelse return;
-    if (request.kind == .read and !request.valid) return;
-    const header = switch (request.kind) {
-        .read => "5522;type=read:status=EPERM",
-        .write => if (request.valid) "5522;type=write:status=EPERM" else "5522;type=write:status=EINVAL",
-    };
-    var response: [consequences.retained_packet_bytes_max + 64]u8 = undefined;
-    @memcpy(response[0..header.len], header);
+/// Returns the validated read location and decoded MIME list in caller scratch.
+pub fn inspectKittyRead(raw: []const u8, scratch: *KittyReadScratch) ?KittyReadRequest {
+    const request = kittyStart(raw, scratch) orelse return null;
+    if (request.kind != .read or !request.valid) return null;
+    return .{ .location = request.location, .mime_types = request.mime_types };
+}
+
+// Serialize the response through one bounded owner for both positive and
+// negative paths. A caller-selected MIME token comes from the original
+// request (or the special period), so encoded metadata is also bounded.
+fn appendKittyResponse(output: *replies.Buffer, request: KittyStart, status: KittyStatus, mime: []const u8, data: []const u8) replies.AppendError!void {
+    const encoder = std.base64.standard.Encoder;
+    var response: [consequences.retained_packet_bytes_max + 128 + encoder.calcSize(consequences.retained_packet_bytes_max) + encoder.calcSize(max_read_chunk)]u8 = undefined;
+    const header = std.fmt.bufPrint(&response, "5522;type={s}:status={s}{s}", .{
+        @tagName(request.kind),
+        @tagName(status),
+        if (request.kind == .read and status == .OK and request.location == .primary) ":loc=primary" else "",
+    }) catch return error.ReplyLimit;
     const id_start = header.len + ":id=".len;
     var end = id_start;
     for (request.id) |byte| switch (byte) {
@@ -208,7 +244,121 @@ pub fn appendKittyRefusal(output: *replies.Buffer, raw: []const u8) replies.Appe
         end = header.len
     else
         @memcpy(response[header.len..id_start], ":id=");
+    if (mime.len != 0) {
+        @memcpy(response[end..][0..6], ":mime=");
+        end += 6;
+        end += encoder.encode(response[end..], mime).len;
+    }
+    if (data.len != 0) {
+        response[end] = ';';
+        end += 1;
+        end += encoder.encode(response[end..], data).len;
+    }
     try output.appendString(.kitty, .osc, response[0..end]);
+}
+
+/// Serializes the caller's refusal of an OSC 5522 packet. No clipboard
+/// data, permission token, or host action is accepted. Invalid reads and
+/// unassociated write continuations are silent; valid starts receive EPERM.
+/// The original packet is bounded by the canonical consequence owner.
+pub fn appendKittyRefusal(output: *replies.Buffer, raw: []const u8) replies.AppendError!void {
+    std.debug.assert(raw.len <= consequences.retained_packet_bytes_max);
+    var scratch: KittyReadScratch = undefined;
+    const request = kittyStart(raw, &scratch) orelse return;
+    if (request.kind == .read and !request.valid) return;
+    try appendKittyResponse(output, request, if (request.valid) .EPERM else .EINVAL, "", "");
+}
+
+// Select the next requested MIME in order. Unavailable ordinary types can
+// be skipped; an open type must finish before any later type is sent.
+// A period requests an inventory, which must not be silently skipped.
+fn selectReadMime(request: KittyStart, cursor: consequences.KittyReadCursor, mime: []const u8, last: bool) error{InvalidClipboardResponse}!consequences.KittyReadCursor {
+    var names = std.mem.tokenizeAny(u8, request.mime_types, mime_whitespace);
+    var ordinal: u16 = 0;
+    while (names.next()) |name| : (ordinal += 1) {
+        if (ordinal < cursor.next_mime) continue;
+        if (std.mem.eql(u8, name, mime))
+            return .{ .next_mime = ordinal + @intFromBool(last), .open = !last };
+        if (cursor.open or std.mem.eql(u8, name, ".")) return error.InvalidClipboardResponse;
+    }
+    return error.InvalidClipboardResponse;
+}
+
+fn readCanFinish(request: KittyStart, cursor: consequences.KittyReadCursor) bool {
+    if (cursor.open) return false;
+    var names = std.mem.tokenizeAny(u8, request.mime_types, mime_whitespace);
+    var ordinal: u16 = 0;
+    while (names.next()) |name| : (ordinal += 1) {
+        if (ordinal >= cursor.next_mime and std.mem.eql(u8, name, ".")) return false;
+    }
+    return true;
+}
+
+fn validMimeName(name: []const u8) bool {
+    if (name.len == 0 or std.mem.eql(u8, name, ".") or !std.unicode.utf8ValidateSlice(name)) return false;
+    for (name) |byte| {
+        if (byte <= 0x20 or byte == 0x7f) return false;
+    }
+    return true;
+}
+
+/// Appends one complete caller-approved read step. Return null only when
+/// the exact request can retire (opening error or DONE). No cursor or
+/// caller borrows are changed until a complete reply fits the queue.
+pub fn appendKittyRead(output: *replies.Buffer, raw: []const u8, progress: ?consequences.KittyReadCursor, reply: KittyReadReply) KittyReadError!?consequences.KittyReadCursor {
+    std.debug.assert(raw.len <= consequences.retained_packet_bytes_max);
+    var scratch: KittyReadScratch = undefined;
+    const request = kittyStart(raw, &scratch) orelse return error.InvalidClipboardResponse;
+    if (request.kind != .read or !request.valid) return error.InvalidClipboardResponse;
+    switch (reply) {
+        .begin => |location| {
+            if (progress != null or location != request.location) return error.InvalidClipboardResponse;
+            try appendKittyResponse(output, request, .OK, "", "");
+            return .{};
+        },
+        .unavailable, .denied, .busy => {
+            if (progress != null) return error.InvalidClipboardResponse;
+            const status: KittyStatus = switch (reply) {
+                .unavailable => .ENOSYS,
+                .denied => .EPERM,
+                .busy => .EBUSY,
+                else => return error.InvalidClipboardResponse,
+            };
+            try appendKittyResponse(output, request, status, "", "");
+            return null;
+        },
+        .data => |chunk| {
+            const cursor = progress orelse return error.InvalidClipboardResponse;
+            if (chunk.bytes.len > max_read_chunk or (chunk.bytes.len == 0 and !chunk.last) or
+                std.mem.eql(u8, chunk.mime, ".")) return error.InvalidClipboardResponse;
+            const next = try selectReadMime(request, cursor, chunk.mime, chunk.last);
+            try appendKittyResponse(output, request, .DATA, chunk.mime, chunk.bytes);
+            return next;
+        },
+        .list => |listing| {
+            const cursor = progress orelse return error.InvalidClipboardResponse;
+            if (listing.names.len == 0 and !listing.last) return error.InvalidClipboardResponse;
+            const next = try selectReadMime(request, cursor, ".", listing.last);
+            var bytes: [max_read_chunk]u8 = undefined;
+            var used: usize = 0;
+            for (listing.names) |name| {
+                if (name.len >= bytes.len - used or !validMimeName(name)) return error.InvalidClipboardResponse;
+                @memcpy(bytes[used..][0..name.len], name);
+                used += name.len;
+                bytes[used] = ' ';
+                used += 1;
+            }
+            if (used != 0) bytes[used - 1] = '\n';
+            try appendKittyResponse(output, request, .DATA, ".", bytes[0..used]);
+            return next;
+        },
+        .done => {
+            const cursor = progress orelse return error.InvalidClipboardResponse;
+            if (!readCanFinish(request, cursor)) return error.InvalidClipboardResponse;
+            try appendKittyResponse(output, request, .DONE, "", "");
+            return null;
+        },
+    }
 }
 
 fn decodeSetInto(raw: []const u8, output: []u8) IntoError!u64 {

@@ -4560,3 +4560,222 @@ test "Kitty clipboard refusal allocation failure does not consume a request" {
     try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EPERM:id=keep\x1b\\", terminal.replyBytes());
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }
+
+test "Kitty caller-owned read stream filters MIME order and crosses the bounded reply queue" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.init(allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b G\x1b]5522;type=read:loc=primary:id=a/b+;dGV4dC9wbGFpbiBtaXNzaW5nIGltYWdlL3BuZw==\x07");
+    const request = terminal.consequenceHead().?.clipboard;
+    var scratch: Terminal.KittyReadScratch = undefined;
+    const read = (try terminal.inspectKittyClipboardRead(request.generation, &scratch)) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(read.location == .primary);
+    try std.testing.expectEqualStrings("text/plain missing image/png", read.mime_types);
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .{ .begin = .clipboard }));
+    try terminal.replyKittyClipboardRead(request.generation, .{ .begin = .primary });
+    try std.testing.expect(terminal.consequenceHead().?.requiresReply());
+    try std.testing.expectError(error.ReplyRequired, terminal.consumeConsequence(request.generation));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.declineKittyClipboard(request.generation));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .busy));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .{ .begin = .primary }));
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:loc=primary:id=ab+\x1b\\", terminal.replyBytes());
+    // Stream more than the entire 64KiB reply queue with binary data,
+    // including exact retry of the rejected chunk. Only caller owns data.
+    const count = 17 * 4096 + 3;
+    const bytes = try allocator.alloc(u8, count);
+    defer allocator.free(bytes);
+    for (bytes, 0..) |*byte, i| byte.* = @truncate(i);
+    var decoded = std.ArrayList(u8).empty;
+    defer decoded.deinit(allocator);
+    var offset: usize = 0;
+    var pressure = false;
+    while (offset < bytes.len) {
+        const n = @min(@as(usize, 4096), bytes.len - offset);
+        const sequence = terminal.semanticSequence();
+        const action: Terminal.KittyReadReply = .{ .data = .{ .mime = "text/plain", .bytes = bytes[offset..][0..n], .last = offset + n == bytes.len } };
+        terminal.replyKittyClipboardRead(request.generation, action) catch |failure| {
+            if (failure != error.ReplyLimit) return failure;
+            pressure = true;
+            try std.testing.expectEqual(sequence, terminal.semanticSequence());
+            try std.testing.expectEqual(request.generation, terminal.consequenceHead().?.id());
+            try appendReadPayloads(allocator, &decoded, terminal.replyBytes(), "dGV4dC9wbGFpbg==");
+            try consumeReplies(&terminal);
+            continue;
+        };
+        offset += n;
+        if (offset < bytes.len) {
+            try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .done));
+            try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .{ .data = .{ .mime = "image/png", .bytes = "premature", .last = true } }));
+        }
+    }
+    try std.testing.expect(pressure);
+    try appendReadPayloads(allocator, &decoded, terminal.replyBytes(), "dGV4dC9wbGFpbg==");
+    try std.testing.expectEqualSlices(u8, bytes, decoded.items);
+    try consumeReplies(&terminal);
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .{ .data = .{ .mime = "text/plain", .bytes = "replayed", .last = true } }));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(request.generation, .{ .data = .{ .mime = "unrequested/type", .bytes = "secret", .last = true } }));
+    try terminal.replyKittyClipboardRead(request.generation, .{ .data = .{ .mime = "image/png", .bytes = &.{ 0, 255, 1 }, .last = true } });
+    try terminal.replyKittyClipboardRead(request.generation, .done);
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=DATA:id=ab+:mime=aW1hZ2UvcG5n;AP8B\x1b\\\x1b]5522;type=read:status=DONE:id=ab+\x1b\\", terminal.replyBytes());
+    try std.testing.expect(!terminal.hasPendingKittyClipboard());
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.replyKittyClipboardRead(request.generation, .done));
+}
+
+fn appendReadPayloads(allocator: std.mem.Allocator, decoded: *std.ArrayList(u8), wire: []const u8, encoded_mime: []const u8) !void {
+    var packets = std.mem.splitSequence(u8, wire, "\x1b\\");
+    while (packets.next()) |packet| {
+        if (packet.len == 0 or std.mem.startsWith(u8, packet, "\x1b]5522;type=read:status=OK")) continue;
+        var prefix: [128]u8 = undefined;
+        const header = try std.fmt.bufPrint(&prefix, "\x1b]5522;type=read:status=DATA:id=ab+:mime={s};", .{encoded_mime});
+        try std.testing.expect(std.mem.startsWith(u8, packet, header));
+        const encoded = packet[header.len..];
+        const decoder = std.base64.standard.Decoder;
+        const size = try decoder.calcSizeForSlice(encoded);
+        try std.testing.expect(size <= 4096);
+        var scratch: [4096]u8 = undefined;
+        try decoder.decode(scratch[0..size], encoded);
+        try decoded.appendSlice(allocator, scratch[0..size]);
+    }
+}
+
+test "Kitty read listing uses typed MIME names and permits only opening failure statuses" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    for ([_]Terminal.KittyReadReply{ .unavailable, .denied, .busy }, [_][]const u8{ "ENOSYS", "EPERM", "EBUSY" }) |action, status| {
+        try feed(&terminal, "\x1b]5522;type=read:id=q;Lg==\x07");
+        const id = terminal.consequenceHead().?.id();
+        try terminal.replyKittyClipboardRead(id, action);
+        var expected: [96]u8 = undefined;
+        try std.testing.expectEqualStrings(try std.fmt.bufPrint(&expected, "\x1b]5522;type=read:status={s}:id=q\x1b\\", .{status}), terminal.replyBytes());
+        try consumeReplies(&terminal);
+    }
+    try feed(&terminal, "\x1b]5522;type=read:id=q;Lg==\x07");
+    const id = terminal.consequenceHead().?.id();
+    try terminal.replyKittyClipboardRead(id, .{ .begin = .clipboard });
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .data = .{ .mime = ".", .bytes = "not a listing", .last = true } }));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{"not a MIME token"}, .last = true } }));
+    try terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{"text/plain"}, .last = false } });
+    try terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{"image/png"}, .last = true } });
+    try terminal.replyKittyClipboardRead(id, .done);
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:id=q\x1b\\\x1b]5522;type=read:status=DATA:id=q:mime=Lg==;dGV4dC9wbGFpbgo=\x1b\\\x1b]5522;type=read:status=DATA:id=q:mime=Lg==;aW1hZ2UvcG5nCg==\x1b\\\x1b]5522;type=read:status=DONE:id=q\x1b\\", terminal.replyBytes());
+}
+
+test "Kitty read validation rejects malformed requests and wrong FIFO heads without replies" {
+    for ([_][]const u8{
+        "type=read;!!!!",
+        "type=read;QR==",
+        "type=read;AA==",
+        "type=read;IA==",
+        "type=read;/w==",
+        "type=read:loc=invalid;Lg==",
+        "type=read:name=!!!!;Lg==",
+        "type=read:pw=!!!!;Lg==",
+        "type=read:type=write;Lg==",
+        "type=write",
+        "type=wdata",
+    }) |payload| {
+        var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+        defer terminal.deinit();
+        var packet: [128]u8 = undefined;
+        try feed(&terminal, try std.fmt.bufPrint(&packet, "\x1b]5522;{s}\x07", .{payload}));
+        const id = terminal.consequenceHead().?.id();
+        var scratch: Terminal.KittyReadScratch = undefined;
+        const before = terminal.semanticSequence();
+        try std.testing.expect((try terminal.inspectKittyClipboardRead(id, &scratch)) == null);
+        try std.testing.expectError(error.StaleClipboardRequest, terminal.inspectKittyClipboardRead(id + 1, &scratch));
+        try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .begin = .clipboard }));
+        try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .denied));
+        try std.testing.expectEqual(before, terminal.semanticSequence());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
+        try terminal.consumeConsequence(id);
+    }
+}
+
+test "Kitty read begin and data allocation failure preserve exact response state" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var terminal = try Terminal.init(failing.allocator(), 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]5522;type=read:id=q;dGV4dC9wbGFpbg==\x07");
+    const id = terminal.consequenceHead().?.id();
+    const begin: Terminal.KittyReadReply = .{ .begin = .clipboard };
+    const initial = terminal.semanticSequence();
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.replyKittyClipboardRead(id, begin));
+    try std.testing.expectEqual(initial, terminal.semanticSequence());
+    try std.testing.expect(!terminal.consequenceHead().?.requiresReply());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    try terminal.replyKittyClipboardRead(id, begin);
+    const accepted = terminal.semanticSequence();
+    const large: [4096]u8 = @splat(0x9c);
+    const data: Terminal.KittyReadReply = .{ .data = .{ .mime = "text/plain", .bytes = &large, .last = true } };
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expectError(error.OutOfMemory, terminal.replyKittyClipboardRead(id, data));
+    try std.testing.expectEqual(accepted, terminal.semanticSequence());
+    try std.testing.expect(terminal.consequenceHead().?.requiresReply());
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:id=q\x1b\\", terminal.replyBytes());
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    try terminal.replyKittyClipboardRead(id, data);
+    try terminal.replyKittyClipboardRead(id, .done);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "Kitty read bounds and completion pressure retain the started request until retry" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    const ok = "\x1b]5522;type=read:status=OK:id=q\x1b\\";
+    const data = "\x1b]5522;type=read:status=DATA:id=q:mime=dGV4dC9wbGFpbg==;QQ==\x1b\\";
+    const done = "\x1b]5522;type=read:status=DONE:id=q\x1b\\";
+    const fill = try reply_fill.fill(&terminal, std.testing.allocator, expected_reply_bytes - ok.len - data.len - done.len + 1, false);
+    defer std.testing.allocator.free(fill);
+    try feed(&terminal, "\x1b]5522;type=read:id=q;dGV4dC9wbGFpbg==\x07");
+    const id = terminal.consequenceHead().?.id();
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .done));
+    try terminal.replyKittyClipboardRead(id, .{ .begin = .clipboard });
+    const too_large: [4097]u8 = @splat(1);
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .data = .{ .mime = "text/plain", .bytes = &too_large, .last = true } }));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .data = .{ .mime = "text/plain", .bytes = "", .last = false } }));
+    try terminal.replyKittyClipboardRead(id, .{ .data = .{ .mime = "text/plain", .bytes = "A", .last = true } });
+    const before = terminal.semanticSequence();
+    try std.testing.expectError(error.ReplyLimit, terminal.replyKittyClipboardRead(id, .done));
+    try std.testing.expectEqual(before, terminal.semanticSequence());
+    try std.testing.expectEqual(id, terminal.consequenceHead().?.id());
+    try std.testing.expect(terminal.consequenceHead().?.requiresReply());
+    try std.testing.expectEqualStrings(fill, terminal.replyBytes()[0..fill.len]);
+    try std.testing.expectEqualStrings(ok ++ data, terminal.replyBytes()[fill.len..]);
+    try consumeReplies(&terminal);
+    try terminal.replyKittyClipboardRead(id, .done);
+    try std.testing.expectEqualStrings(done, terminal.replyBytes());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "Kitty read inventory bounds and RIS revoke only the started transfer" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b]5522;type=read:id=q;Lg==\x07\x1b]5522;type=read:id=next;Lg==\x07");
+    const id = terminal.consequenceHead().?.id();
+    try terminal.replyKittyClipboardRead(id, .{ .begin = .clipboard });
+    const name: [4095]u8 = @splat('x');
+    const oversized: [4096]u8 = @splat('x');
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .done));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{&oversized}, .last = true } }));
+    try std.testing.expectError(error.InvalidClipboardResponse, terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{ &name, "y" }, .last = true } }));
+    try terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{&name}, .last = false } });
+    const before = try std.testing.allocator.dupe(u8, terminal.replyBytes());
+    defer std.testing.allocator.free(before);
+    terminal.hardReset();
+    try std.testing.expectEqualStrings(before, terminal.replyBytes());
+    try std.testing.expectError(error.StaleClipboardRequest, terminal.replyKittyClipboardRead(id, .{ .list = .{ .names = &.{"secret"}, .last = true } }));
+    try std.testing.expectEqual(id + 1, terminal.consequenceHead().?.id());
+    try std.testing.expect(!terminal.consequenceHead().?.requiresReply());
+    try consumeReplies(&terminal);
+    try terminal.replyKittyClipboardRead(id + 1, .{ .begin = .clipboard });
+    try terminal.replyKittyClipboardRead(id + 1, .{ .list = .{ .names = &.{}, .last = true } });
+    try terminal.replyKittyClipboardRead(id + 1, .done);
+    try std.testing.expectEqualStrings("\x1b]5522;type=read:status=OK:id=next\x1b\\\x1b]5522;type=read:status=DATA:id=next:mime=Lg==\x1b\\\x1b]5522;type=read:status=DONE:id=next\x1b\\", terminal.replyBytes());
+}

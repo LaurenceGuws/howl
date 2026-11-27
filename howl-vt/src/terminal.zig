@@ -6303,6 +6303,14 @@ pub const Terminal = struct {
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
     /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
     pub const ClipboardReplyError = replies.AppendError || error{ ConsequenceLimit, StaleClipboardRequest };
+    /// Caller-selected MIME read reply errors; failed steps retain identity.
+    pub const KittyReadReplyError = ClipboardReplyError || error{InvalidClipboardResponse};
+    /// Caller-owned scratch for inspecting one retained MIME read.
+    pub const KittyReadScratch = clipboard_mod.KittyReadScratch;
+    /// Decoded requested MIME names borrowed from caller scratch.
+    pub const KittyReadRequest = clipboard_mod.KittyReadRequest;
+    /// One caller-approved MIME read response step.
+    pub const KittyReadReply = clipboard_mod.KittyReadReply;
     /// Reports a reply prefix larger than the currently retained byte count.
     pub const ReplyConsumeError = error{InvalidReplyCount};
     /// Reports stale or mismatched caller state, allocation failure, or bounded reply saturation.
@@ -6339,7 +6347,7 @@ pub const Terminal = struct {
         /// Pointer-shape queries request a reply but may instead be consumed by policy.
         pub fn requiresReply(self: Consequence) bool {
             return switch (self) {
-                .clipboard => |value| value.kind == .query,
+                .clipboard => |value| value.kind == .query or value.read_started,
                 .container => |value| isContainerQuery(value.request),
                 .color_preference_query => true,
                 .notification, .program_status, .pointer_shape, .file_transfer, .drag_drop, .bell, .legacy_control, .media_copy, .dcs, .string_control => false,
@@ -7746,7 +7754,8 @@ pub const Terminal = struct {
     // -------------------------------------------------------------------------
 
     /// Applies canonical RIS and advances semantic/content identity once.
-    /// Cell geometry, queued replies and retained consequences remain owned.
+    /// Cell geometry, queued replies and unstarted consequences remain owned.
+    /// An admitted MIME read is cancelled before further data can be sent.
     pub fn hardReset(self: *Terminal) void {
         self.applyHardReset();
         advanceIdentity(&self.semantic_sequence);
@@ -9055,16 +9064,46 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Declines the exact FIFO-head OSC 5522 packet under caller policy.
-    /// Valid starts receive EPERM, invalid encoded writes receive EINVAL,
-    /// and other packets are ignored. Reply pressure preserves the head.
-    pub fn declineKittyClipboard(self: *Terminal, generation: u64) ClipboardReplyError!void {
-        self.requireNoPreparedResize();
+    fn kittyClipboardHead(self: *const Terminal, generation: u64) error{StaleClipboardRequest}!ClipboardRequest {
         const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
             return error.StaleClipboardRequest;
         const request = consequence.clipboard;
         if (request.protocol != .kitty_5522 or request.kind != .packet) return error.StaleClipboardRequest;
+        return request;
+    }
+
+    /// Inspect the exact FIFO-head read without consuming it or granting
+    /// permission. Decoded MIME names borrow only the supplied scratch.
+    pub fn inspectKittyClipboardRead(self: *const Terminal, generation: u64, scratch: *KittyReadScratch) error{StaleClipboardRequest}!?KittyReadRequest {
+        const request = try self.kittyClipboardHead(generation);
+        return clipboard_mod.inspectKittyRead(request.payload, scratch);
+    }
+
+    /// Serialize one caller-approved read step. Callers own location,
+    /// permission, data snapshot and transport scheduling; service this
+    /// head before feeding later reply-generating input. No data is retained
+    /// beyond the bounded reply buffer and one small MIME cursor.
+    pub fn replyKittyClipboardRead(self: *Terminal, generation: u64, reply: KittyReadReply) KittyReadReplyError!void {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        const next = try clipboard_mod.appendKittyRead(&self.reply_buffer, request.payload, self.consequences.kitty_read, reply);
+        if (next) |cursor| {
+            self.consequences.kitty_read = cursor;
+        } else {
+            self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        }
+        advanceIdentity(&self.semantic_sequence);
+        self.content_sequence = self.semantic_sequence;
+    }
+
+    /// Declines the exact FIFO-head OSC 5522 packet under caller policy.
+    /// Valid starts receive EPERM, invalid encoded writes receive EINVAL,
+    /// and other packets are ignored. A started read must complete or reset.
+    pub fn declineKittyClipboard(self: *Terminal, generation: u64) KittyReadReplyError!void {
+        self.requireNoPreparedResize();
+        const request = try self.kittyClipboardHead(generation);
+        if (request.read_started) return error.InvalidClipboardResponse;
         try clipboard_mod.appendKittyRefusal(&self.reply_buffer, request.payload);
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
         advanceIdentity(&self.semantic_sequence);
