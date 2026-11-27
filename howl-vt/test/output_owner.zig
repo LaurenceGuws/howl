@@ -2773,3 +2773,37 @@ test "Kitty chunked image replacement preserves a held resource through rejectio
     try std.testing.expectEqual(resource.resource, next.snapshot.graphics.images[0].resource.resource);
     try std.testing.expect(@backingInt(next.snapshot.graphics.images[0].resource.generation) > @backingInt(resource.generation));
 }
+
+test "Kitty equal z order follows stable image identity after re-put and replacement" {
+    const f = try font(12);
+    defer f.deinit();
+    const owner = try ready(a, f);
+    defer destroy(owner);
+    // Pinned Kitty compares internal image IDs, not client IDs or put time.
+    try owner.feed(
+        "\x1b_Ga=t,i=90,s=1,v=1,q=2;/wAA/w==\x1b\\" ++
+            "\x1b_Ga=T,i=12,p=1,s=1,v=1,C=1,q=2;AP8A/w==\x1b\\" ++
+            "\x1b_Ga=p,i=90,p=1,C=1,q=2\x1b\\",
+    );
+    try owner.flush();
+    {
+        const held = try owner.hold();
+        defer release(owner, held);
+        const scene = held.snapshot.graphics;
+        try std.testing.expectEqual(@as(usize, 2), scene.positive.len);
+        try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, scene.images[0].pixels);
+        try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, scene.images[1].pixels);
+        try std.testing.expectEqualDeep(scene.images[0].resource, scene.positive[0].rgba.resource.resource);
+        try std.testing.expectEqualDeep(scene.images[1].resource, scene.positive[1].rgba.resource.resource);
+    }
+    try owner.feed("\x1b_Ga=T,i=90,p=1,s=1,v=1,C=1,q=2;AAD//w==\x1b\\");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const scene = held.snapshot.graphics;
+    try std.testing.expectEqual(@as(usize, 2), scene.positive.len);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, scene.images[0].pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, scene.images[1].pixels);
+    try std.testing.expectEqualDeep(scene.images[0].resource, scene.positive[0].rgba.resource.resource);
+    try std.testing.expectEqualDeep(scene.images[1].resource, scene.positive[1].rgba.resource.resource);
+}

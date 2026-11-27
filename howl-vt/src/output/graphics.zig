@@ -89,6 +89,7 @@ fn orderLessThan(_: void, left: Ordered, right: Ordered) bool {
     const a = left.placement;
     const b = right.placement;
     if (a.z != b.z) return a.z < b.z;
+    if (a.image_id != b.image_id) return a.image_id < b.image_id;
     if (a.generation != b.generation) return a.generation < b.generation;
     return left.ordinal < right.ordinal;
 }

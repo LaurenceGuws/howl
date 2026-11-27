@@ -2428,10 +2428,10 @@ pub const Plane = struct {
         std.debug.assert(cell_width != 0 and cell_height != 0);
         if (source_x >= pixel_width or source_y >= pixel_height or
             cell_x >= cell_width or cell_y >= cell_height) return null;
-        const source_width = if (requested_width == 0) pixel_width - source_x else requested_width;
-        const source_height = if (requested_height == 0) pixel_height - source_y else requested_height;
-        if (source_width == 0 or source_height == 0 or
-            source_width > pixel_width - source_x or source_height > pixel_height - source_y) return null;
+        const available_width = pixel_width - source_x;
+        const available_height = pixel_height - source_y;
+        const source_width = if (requested_width == 0) available_width else @min(requested_width, available_width);
+        const source_height = if (requested_height == 0) available_height else @min(requested_height, available_height);
         var destination_width = source_width;
         var destination_height = source_height;
         if (requested_cols != 0) {
@@ -3063,7 +3063,7 @@ pub fn formatFeatureQuery(packet: []const u8, scratch: []u8) error{ReplyLimit}![
         return scratch[0..0];
     var out: FeatureWriter = .{ .bytes = scratch };
     const action = command_value.feature_action;
-    const transmitting = action == 't' or action == 'T' or action == 'f';
+    const transmitting = action == 't' or action == 'T' or action == 'q' or action == 'f';
     const placing = action == 'T' or action == 'p';
     const deleting = action == 'd';
     const animating = action == 'a';
@@ -6011,4 +6011,30 @@ test "Kitty replacement reuses full placement capacity by retiring the prior gro
     const id = plane.images[plane.kittyImageIndex(70).?].id;
     try std.testing.expect(plane.placementIndex(id, 3) == null);
     try std.testing.expect(plane.placementIndex(id, 4) != null);
+}
+
+test "Kitty source crop intersects image bounds before placement geometry" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    const result = try plane.command("a=T,i=81,p=1,s=2,v=2,x=1,w=4294967295,h=4294967295,c=2,C=1;AQIDBAUGBwgJCgsMDQ4PEA==", .primary, 0, 1, 2, 8, 16);
+    try std.testing.expect(result.changed and result.failure == null);
+    const first = plane.placement(0).?;
+    try std.testing.expectEqual(@as(u32, 1), first.source_width);
+    try std.testing.expectEqual(@as(u32, 2), first.source_height);
+    try std.testing.expectEqual(@as(u32, 16), first.pixel_width);
+    try std.testing.expectEqual(@as(u32, 32), first.pixel_height);
+    const put = try plane.command("a=p,i=81,p=1,y=1,w=4294967295,h=4294967295,r=1,C=1", .primary, 0, 3, 4, 8, 16);
+    try std.testing.expect(put.changed and put.failure == null);
+    const second = plane.placement(0).?;
+    try std.testing.expectEqual(first.identity, second.identity);
+    try std.testing.expectEqual(@as(u32, 2), second.source_width);
+    try std.testing.expectEqual(@as(u32, 1), second.source_height);
+    try std.testing.expectEqual(@as(u32, 32), second.pixel_width);
+    try std.testing.expectEqual(@as(u32, 16), second.pixel_height);
+    const generation = plane.generation();
+    for ([_][]const u8{ "a=p,i=81,p=1,x=2", "a=p,i=81,p=1,y=2", "a=p,i=81,p=1,X=8", "a=p,i=81,p=1,Y=16" }) |invalid| {
+        try std.testing.expectEqual(@as(?Failure, .invalid), (try plane.command(invalid, .primary, 0, 0, 0, 8, 16)).failure);
+        try std.testing.expectEqualDeep(second, plane.placement(0).?);
+        try std.testing.expectEqual(generation, plane.generation());
+    }
 }

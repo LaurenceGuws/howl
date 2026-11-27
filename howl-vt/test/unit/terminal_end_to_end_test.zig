@@ -6981,3 +6981,23 @@ test "Kitty final acknowledgement reserves before mutation and emits once at ava
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, terminal.images(0).image(0).?.pixels);
 }
+
+test "terminal: Kitty query action capability precedes DA1 without retained data" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 10);
+    defer terminal.deinit();
+    const generation = terminal.images(0).generation;
+    try feed(
+        &terminal,
+        "\x1b_Ga=q,i=31,t=d,f=24,s=1,v=1;AAAA\x1b\\" ++
+            "\x1b_Ga=q,i=32,e=q,t=d,f=24,s=1,v=1,p=7,U=1;ignored\x1b\\" ++
+            "\x1b_Ga=q,i=33,e=q,t=f,f=8,s=1,v=1\x1b\\" ++
+            "\x1b_Ga=q,i=34,e=Z\x1b\\\x1b[c",
+    );
+    try std.testing.expectEqualStrings(
+        "\x1b_Gi=31;OK\x1b\\\x1b_Gi=32,e=q,t=d,f=24,s=1,v=1;OK\x1b\\\x1b_Gi=33,e=q,f=8,s=1,v=1;OK\x1b\\\x1b_Gi=34;OK\x1b\\\x1b[?62;22c",
+        terminal.replyBytes(),
+    );
+    try std.testing.expectEqual(generation, terminal.images(0).generation);
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+}

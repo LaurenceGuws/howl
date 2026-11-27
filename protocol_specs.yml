@@ -10668,6 +10668,15 @@ specifications:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: Kitty graphics feature queries reserve exact reply bytes atomically'
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty query action capability precedes DA1 without retained data'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics feature query reports only bounded supported actions'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty graphics placement features negotiate only represented keys'
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_graphics_01:
           scope: Existing feature queries interleaved during unfinished static image preserve load, ignore payload, report
@@ -10678,6 +10687,15 @@ specifications:
             lines475-495,546-609,943-965; graphics.c INIT_CHUNKED_LOAD and grman_handle_command/finish_command_response_with_keys;
             deterministic Plane and VT wire red-green and existing PNG/zlib/feature proofs; no blanket FULL promotion
           baseline: 8e2e988ae1df2de7719f21b9ecd4640996f4201d
+        howl_qualification_20261127_kitty_graphics_04:
+          scope: e=q now reports the already implemented direct image detection action using the same transmit vocabulary, ignoring
+            placement-only keys and withholding unsupported host media. Exact ordinary probe, supported and unsupported feature
+            replies precede DA1, with no retained image or placement or generation mutation. Existing key/value limits and other
+            feature policies unchanged. Not exhaustive parity.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines548-609; graphics.c supported_keys_for_query and response formatting; deterministic red-green and existing
+            scope proofs; no blanket FULL promotion
+          baseline: a4a0380797a385c369750dc8437a15da6369bf58
     - id: image-number
       section: docs/graphics-protocol.rst:967-996
       level: defined
@@ -10772,6 +10790,27 @@ specifications:
       - APC G
       rule: Source crop intersection; X/Y offsets smaller than cell. c/r destination cell counts, one missing preserves aspect
         ratio, both letterbox/pillarbox. Offsets not added to counts.
+      test_locations:
+      - file: howl-vt/src/graphics.zig
+        test: Kitty source crop intersects image bounds before placement geometry
+        relation: protocol-family
+      - file: howl-vt/src/graphics.zig
+        test: Kitty crop destination offsets and layer preflight before placement mutation
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: direct output preserves Kitty source crop and destination pixel offsets
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_04:
+          scope: 'Positive source intersections clamp requested extents to the remaining image before aspect-ratio geometry, including
+            maximum u32 extents; both transmit-display and re-put are covered. Empty intersection and out-of-cell offsets remain
+            rejected transactionally. Existing one-axis scaling and explicit cell rectangle offsets retained. Both-axis fit remains
+            unresolved: author prose specifies letterbox/pillarbox but pinned renderer stretches its rectangle. Pinned implementation
+            also clamps out-of-cell offsets, unlike our strict admission. No blanket geometry equivalence.'
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines667-688; graphics.c handle_put_command/update_dest_rect and render-data destination rectangle; deterministic
+            red-green and existing scope proofs; no blanket FULL promotion
+          baseline: a4a0380797a385c369750dc8437a15da6369bf58
     - id: placement-z-order
       section: docs/graphics-protocol.rst:690-698
       level: defined
@@ -10780,6 +10819,23 @@ specifications:
       - APC G
       rule: Negative z below text; below -1073741824 below nondefault backgrounds. Equal z lower image id below higher; same
         z and id undefined.
+      test_locations:
+      - file: howl-vt/test/output_owner.zig
+        test: Kitty equal z order follows stable image identity after re-put and replacement
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: direct Kitty images have deterministic deep negative and positive paint order
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_04:
+          scope: Output sort now uses z then stable internal image identity, following pinned graphics.c internal_id rather than
+            client i or placement generation. Re-put and retransmission no longer reverse distinct equal-z images. Same image
+            and z retain local generation/ordinal tie-break (protocol undefined). Existing three layer buckets retained; not a
+            complete pixel-composition or cross-protocol ordering proof.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines690-698; graphics.c render data image_id/ref_id and comparison; deterministic red-green and existing scope
+            proofs; no blanket FULL promotion
+          baseline: a4a0380797a385c369750dc8437a15da6369bf58
     - id: placement-cursor-policy
       section: docs/graphics-protocol.rst:700-710
       level: defined
@@ -10788,6 +10844,25 @@ specifications:
       - APC G
       rule: Default cursor moves right placement columns and down rows; out-of-screen/region implementation-defined. C=1 suppresses
         movement.
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty C=1 display retains cursor for explicit placement'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty default placement advances cursor through VT ownership'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Kitty placement cursor advance scrolls history without detaching image'
+        relation: protocol-family
+      evidence:
+        howl_qualification_20261127_kitty_graphics_04:
+          scope: Existing tests cover suppressed movement, physical display and re-put default movement, and history scroll retaining
+            image. Local default advances columns and rows minus one, matching the pinned executable rather than prose down by
+            row count. No behavior change; source discrepancy and edge policy remain scoped.
+          method: Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184 docs/graphics-protocol.rst SHA256 c51470cc0bd16c804ff2d1652507f6fc6966271ab1164359012b8bbdb0375dbb;
+            docs lines700-710; graphics.c handle_put_command cursor movement; deterministic red-green and existing scope proofs;
+            no blanket FULL promotion
+          baseline: a4a0380797a385c369750dc8437a15da6369bf58
     - id: delete-selectors
       section: docs/graphics-protocol.rst:907-952
       level: defined
