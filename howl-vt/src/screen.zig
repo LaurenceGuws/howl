@@ -3663,8 +3663,8 @@ pub const Screen = struct {
         return !std.meta.eql(before, self.current_attrs);
     }
 
-    // One bounded set of absolute field assignments for a region. SGR
-    // commands set/reset fields; they never derive a new value from a cell.
+    // One bounded set of field assignments for a region, plus relative
+    // script-bit enables when no reset superseded them.
     // Decode once, without retaining another rendition state or reparsing
     // color groups for each cell. Protection and hyperlink are not SGR fields.
     const SgrPatch = struct {
@@ -3676,6 +3676,9 @@ pub const Screen = struct {
 
         values: CellAttrs = initial_cell_attrs,
         written: u32 = 0,
+        // Script selectors set independent bits. An explicit reset makes
+        // their subsequent composition absolute rather than relative.
+        baseline_relative: bool = true,
 
         fn fieldBit(comptime name: []const u8) u32 {
             inline for (fields, 0..) |field, index| {
@@ -3688,6 +3691,12 @@ pub const Screen = struct {
         inline fn set(self: *SgrPatch, comptime name: []const u8, value: @FieldType(CellAttrs, name)) void {
             @field(self.values, name) = value;
             self.written |= comptime fieldBit(name);
+            if (comptime std.mem.eql(u8, name, "baseline")) self.baseline_relative = false;
+        }
+
+        fn addBaseline(self: *SgrPatch, flags: ScreenBaseline) void {
+            self.values.baseline = self.values.baseline.merge(flags);
+            self.written |= comptime fieldBit("baseline");
         }
 
         fn apply(self: *const SgrPatch, target: *CellAttrs) bool {
@@ -3695,8 +3704,11 @@ pub const Screen = struct {
             inline for (fields) |field| {
                 if (comptime isRenditionField(field)) {
                     if (self.written & (comptime fieldBit(field)) != 0) {
-                        const value = @field(self.values, field);
                         const existing = &@field(target.*, field);
+                        const value = if (comptime std.mem.eql(u8, field, "baseline"))
+                            if (self.baseline_relative) existing.*.merge(self.values.baseline) else self.values.baseline
+                        else
+                            @field(self.values, field);
                         if (!std.meta.eql(existing.*, value)) {
                             existing.* = value;
                             changed = true;
@@ -3805,8 +3817,10 @@ pub const Screen = struct {
                     40...47 => setRenditionField(target, "bg", screenAnsi16Color(@intCast(param - 40))),
                     49 => setRenditionField(target, "bg", initial_cell_attrs.bg),
                     59 => setRenditionField(target, "underline_color", default_cell_underline_color),
-                    73 => setRenditionField(target, "baseline", .raised),
-                    74 => setRenditionField(target, "baseline", .lowered),
+                    73, 74 => {
+                        const flags: ScreenBaseline = if (param == 73) .raised else .lowered;
+                        if (Target == CellAttrs) target.baseline = target.baseline.merge(flags) else target.addBaseline(flags);
+                    },
                     75 => setRenditionField(target, "baseline", .normal),
                     90...97 => setRenditionField(target, "fg", screenAnsi16Color(@intCast((param - 90) + 8))),
                     100...107 => setRenditionField(target, "bg", screenAnsi16Color(@intCast((param - 100) + 8))),
@@ -8031,8 +8045,15 @@ test "shared SGR patch matches direct rendition across supported selectors" {
         .{ .values = &.{ 38, 2, 1, 2 } },
         .{ .values = &.{ 48, 2, 1, 2 }, .colon_after = 0b111 },
         .{ .values = &.{ 1, 2, 221, 222, 1, 0, 7, 104, 22, 59 } },
+        .{ .values = &.{ 73, 74 } },
+        .{ .values = &.{ 74, 73, 75, 74 } },
+        .{ .values = &.{ 73, 0, 74 } },
     };
-    const seeds = [_]ScreenCellAttrs{ initial_cell_attrs, styled };
+    var lowered = styled;
+    lowered.baseline = .lowered;
+    var small = styled;
+    small.baseline = .small;
+    const seeds = [_]ScreenCellAttrs{ initial_cell_attrs, styled, lowered, small };
     for (seeds) |seed| {
         for (0..256) |param| {
             const value: i32 = @intCast(param);

@@ -348,7 +348,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 column += 1;
                 const cell = cells[col];
                 if (cell.x != 0) continue;
-                if (needsScale(cell)) {
+                if (needsScale(cell) or cell.attrs.baseline != .normal) {
                     if (retained_row < cell.y) continue;
                     const lead_row = retained_row - cell.y;
                     const lead = screen.retainedCellInfoAt(lead_row, @intCast(col)) orelse return error.UnsupportedScene;
@@ -536,6 +536,35 @@ pub fn Emitter(comptime instrumented: bool) type {
             };
         }
 
+        // Compose script size inside the already admitted OSC66/ordinary
+        // render rectangle. The canonical cell allocation never changes.
+        fn baselineLayout(outer: ScaledLayout, ctx: Context, baseline: VT.Baseline) BuildError!ScaledLayout {
+            if (baseline == .normal) return outer;
+            var inner = outer;
+            inner.numerator *= 3;
+            inner.denominator *= 5;
+            const width = try scaledExtent(inner.base_width, inner.numerator, inner.denominator);
+            const height = try scaledExtent(ctx.cell_height, inner.numerator, inner.denominator);
+            const area = outer.render_area;
+            const dx = @min(area.width - width, @as(u16, @intCast(@as(u32, area.width) * 3 / 10)));
+            const full_baseline = @as(u32, ctx.baseline) * outer.numerator / outer.denominator;
+            const small_baseline = @as(u32, ctx.baseline) * inner.numerator / inner.denominator;
+            const requested_y: u32 = switch (baseline) {
+                .normal => 0,
+                .raised => area.height / 8,
+                .lowered => @as(u32, area.height) * 13 / 32,
+                .small => full_baseline - small_baseline,
+            };
+            const dy = @min(@as(u32, area.height - height), requested_y);
+            inner.render_area = .{
+                .x = area.x + @as(i32, dx),
+                .y = area.y + @as(i32, @intCast(dy)),
+                .width = width,
+                .height = height,
+            };
+            return inner;
+        }
+
         // Fit the complete decoration before clipping a physical strip.
         // A tiny fractional rectangle cannot represent an arbitrarily
         // thick or widely separated line; keep the admitted ink visible.
@@ -590,7 +619,7 @@ pub fn Emitter(comptime instrumented: bool) type {
         // Ordinary and scaled cells share one decoration geometry and mask
         // owner. Every row sees the same complete layout, then clips its strip.
         fn appendDecorations(ctx: Context, output: []frame.Command, used: *usize, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, line_offset: i32, metrics: text.Metrics, resolved: Colors) BuildError!void {
-            const sizing = try scaledLayout(ctx, cell, col, row_offset);
+            const sizing = try baselineLayout(try scaledLayout(ctx, cell, col, row_offset), ctx, cell.attrs.baseline);
             const area = sizing.render_area;
             const clip = (try frame.intersectRects(area, row_clip)) orelse return;
             if (cell.attrs.underline) {
@@ -640,12 +669,15 @@ pub fn Emitter(comptime instrumented: bool) type {
         // Project a live scaled cluster into one row-local strip. Retaining
         // strips independently lets the VT's existing row generations drive repair.
         fn appendScaled(ctx: Context, output: []frame.Command, used: *usize, sequence: []const u32, style: cache.FontVariant, cell: VT.Cell, col: usize, row_offset: u8, row_clip: frame.Rect, color: frame.Color) BuildError!void {
-            const sizing = try scaledLayout(ctx, cell, col, row_offset);
+            const outer = try scaledLayout(ctx, cell, col, row_offset);
+            const sizing = try baselineLayout(outer, ctx, cell.attrs.baseline);
             const strip = (try frame.intersectRects(sizing.render_area, row_clip)) orelse return;
             if (sequence.len == 1 and text.generated.classify(sequence[0]) != null) {
                 const destination = try sizing.transform(.{ .x = sizing.allocation.x, .y = 0, .width = sizing.base_width, .height = ctx.cell_height });
                 const proper_fraction = cell.subscale_n != 0 and cell.subscale_d != 0 and cell.subscale_n < cell.subscale_d;
-                const raster = try cache.resolveGeneratedAtlas(ctx.atlas, sequence[0], destination.width, destination.height, .{ .scale = cell.height, .subscale_n = if (proper_fraction) cell.subscale_n else 0, .subscale_d = if (proper_fraction) cell.subscale_d else 0 }, ctx.raster);
+                // Preserve the original generated-mask sizing identity;
+                // the additional script transform only samples its ink.
+                const raster = try cache.resolveGeneratedAtlas(ctx.atlas, sequence[0], outer.render_area.width, outer.render_area.height, .{ .scale = cell.height, .subscale_n = if (proper_fraction) cell.subscale_n else 0, .subscale_d = if (proper_fraction) cell.subscale_d else 0 }, ctx.raster);
                 if (try frame.intersectRects(destination, strip)) |clip| {
                     const size = cache.atlasSize(ctx.atlas);
                     try append(ctx.command_bytes_written, output, used, .{ .alpha_mask = .{

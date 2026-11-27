@@ -62,7 +62,7 @@ comptime {
 // =============================================================================
 
 const sgr_stack_capacity = 10;
-const sgr_stack_default_selection: u16 = 0b111_1111_1111;
+const sgr_stack_default_selection: u16 = 0b1_1111_1111_1111;
 
 // Retains one bounded selective rendition snapshot for XTPUSHSGR.
 const SgrStackEntry = struct {
@@ -912,6 +912,9 @@ fn sgrSelection(params: ModeParams) u16 {
             21 => 8,
             30 => 9,
             31 => 10,
+            // Originating Mintty independently selects the script bits.
+            73 => 11,
+            74 => 12,
             else => null,
         };
         if (bit) |value| selection |= @as(u16, 1) << value;
@@ -944,6 +947,8 @@ fn restoreSelectedSgr(current: *ScreenCellAttrs, entry: SgrStackEntry) void {
     if (entry.selection & (1 << 7) != 0) current.strikethrough = entry.attrs.strikethrough;
     if (entry.selection & (1 << 9) != 0) current.fg = entry.attrs.fg;
     if (entry.selection & (1 << 10) != 0) current.bg = entry.attrs.bg;
+    const script_mask: u2 = @truncate(entry.selection >> 11);
+    current.baseline = @fromBackingInt((@backingInt(current.baseline) & ~script_mask) | (@backingInt(entry.attrs.baseline) & script_mask));
 }
 
 fn paramCount32(items: []const i32) u32 {
@@ -2906,6 +2911,10 @@ fn appendSgrAttrs(
         .normal => {},
         .raised => try appendSgrParam(output, &first, "73"),
         .lowered => try appendSgrParam(output, &first, "74"),
+        .small => {
+            try appendSgrParam(output, &first, "73");
+            try appendSgrParam(output, &first, "74");
+        },
     }
     try output.append("m");
 }
@@ -3083,7 +3092,7 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
         while (col <= bounds.right) : (col += 1) {
             const attrs = screen.cellInfoAt(row, col).attrs;
             if (attrs.font != common.font) common.font = 0;
-            if (attrs.baseline != common.baseline) common.baseline = .normal;
+            common.baseline = common.baseline.common(attrs.baseline);
             if (attrs.bold != common.bold) common.bold = false;
             if (attrs.dim != common.dim) common.dim = false;
             if (attrs.italic != common.italic) common.italic = false;

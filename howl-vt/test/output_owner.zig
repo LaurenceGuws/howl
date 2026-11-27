@@ -2409,3 +2409,100 @@ test "DECCARA continuation background remains independent across history lead ev
     try std.testing.expectEqual(@as(usize, 1), evicted.snapshot.backgrounds[0].len);
     try std.testing.expectEqual(output.commands.Color{ .r = 0, .g = 255, .b = 0, .a = 64 }, evicted.snapshot.backgrounds[0][0].solid.color);
 }
+
+test "Mintty baseline presentation shrinks generated and font ink without changing occupancy" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(5, 8);
+    try owner.feed("\x1b[?25l█A\r\n\x1b[73m█A\r\n\x1b[75;73;74m█A\r\n\x1b[75;74m█A\r\n\x1b[75;74;73m█A");
+    try owner.flush();
+    const held = try owner.hold();
+    defer release(owner, held);
+    const s = held.snapshot;
+    const metrics = f.metrics();
+    const width: u16 = @intCast((@as(u32, s.cell_width) * 3 + 4) / 5);
+    const height: u16 = @intCast((@as(u32, s.cell_height) * 3 + 4) / 5);
+    const small_baseline: u16 = @intCast(@as(u32, metrics.baseline) * 3 / 5);
+    const offsets = [_]u16{ @min(s.cell_height / 8, s.cell_height - height), @min(metrics.baseline - small_baseline, s.cell_height - height), @min(@as(u16, @intCast(@as(u32, s.cell_height) * 13 / 32)), s.cell_height - height) };
+    try std.testing.expect(offsets[0] < offsets[1] and offsets[1] < offsets[2]);
+    const original = s.glyphs[0][1].alpha_mask;
+    const view = owner.observation().semanticView(0);
+    for (0..5) |row| {
+        try std.testing.expectEqual(@as(usize, 2), s.glyphs[row].len);
+        const block = s.glyphs[row][0].alpha_mask;
+        const ink = s.glyphs[row][1].alpha_mask;
+        try std.testing.expectEqualDeep(original.resource.source, ink.resource.source);
+        try std.testing.expectEqual(@as(u16, if (row == 0) s.cell_width else width), block.destination.width);
+        try std.testing.expectEqual(@as(u16, if (row == 0) s.cell_height else height), block.destination.height);
+        if (row != 0) {
+            try std.testing.expectEqual(@as(i32, offsets[if (row == 4) 1 else row - 1]), block.destination.y);
+            try std.testing.expectEqual(@as(u16, @intCast((@as(u32, original.destination.width) * 3 + 4) / 5)), ink.destination.width);
+            try std.testing.expectEqual(@as(u16, @intCast((@as(u32, original.destination.height) * 3 + 4) / 5)), ink.destination.height);
+            try std.testing.expect(ink.clip.x >= s.cell_width and ink.clip.x + @as(i32, ink.clip.width) <= @as(i32, s.cell_width) * 2);
+            try std.testing.expect(ink.clip.y >= 0 and ink.clip.y + @as(i32, ink.clip.height) <= s.cell_height);
+        }
+        for (0..2) |col| {
+            const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+            try std.testing.expectEqual(@as(u8, 1), cell.width);
+            try std.testing.expectEqual(@as(u8, 1), cell.height);
+            try std.testing.expectEqual(@as(u4, 0), cell.subscale_d);
+        }
+    }
+    try std.testing.expectEqualSlices(output.commands.Command, s.glyphs[2], s.glyphs[4]);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+}
+
+test "Mintty script ink composes with sized text and survives the retained history boundary" {
+    const f = try font(20);
+    defer f.deinit();
+    const owner = try output.Terminal.initConfig(a, f, .{ .history_capacity = 8 });
+    defer destroy(owner);
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b[73;74;4;38:6:10:20:30:128m\x1b]66;s=2;█\x07\x1b[3;1H\x1b]66;s=2:n=1:d=2;█\x07");
+    try owner.flush();
+    var held: ?output.Lease = try owner.hold();
+    defer if (held) |lease| release(owner, lease);
+    const s = held.?.snapshot;
+    const view = owner.observation().semanticView(0);
+    const expected_counts = [_]usize{ 1, 1, 1, 0 };
+    for (expected_counts, 0..) |count, row| {
+        try std.testing.expectEqual(count, s.glyphs[row].len);
+        for (0..2) |col| {
+            const cell = view.cellInfoAt(@intCast(row), @intCast(col));
+            try std.testing.expectEqual(@as(u8, 2), cell.width);
+            try std.testing.expectEqual(@as(u8, 2), cell.height);
+            try std.testing.expectEqual(@as(u8, @intCast(row % 2)), cell.y);
+            try std.testing.expectEqual(@as(u8, @intCast(col)), cell.x);
+            try std.testing.expect(cell.attrs.baseline == .small);
+        }
+    }
+    const upper = s.glyphs[0][0].alpha_mask;
+    const lower = s.glyphs[1][0].alpha_mask;
+    const fractional = s.glyphs[2][0].alpha_mask;
+    try std.testing.expectEqualDeep(upper.resource, lower.resource);
+    try std.testing.expectEqual(upper.destination.y, lower.destination.y + s.cell_height);
+    try std.testing.expectEqual(@as(u16, @intCast((@as(u32, s.cell_width) * 6 + 4) / 5)), upper.destination.width);
+    try std.testing.expectEqual(@as(u16, @intCast((@as(u32, s.cell_height) * 6 + 4) / 5)), upper.destination.height);
+    try std.testing.expectEqual(@as(u16, @intCast((@as(u32, s.cell_width) * 3 + 4) / 5)), fractional.destination.width);
+    try std.testing.expectEqual(@as(u16, @intCast((@as(u32, s.cell_height) * 3 + 4) / 5)), fractional.destination.height);
+    for ([_]output.commands.Color{ upper.color, lower.color, fractional.color }) |color|
+        try std.testing.expectEqual(output.commands.Color{ .r = 10, .g = 20, .b = 30, .a = 128 }, color);
+    var copied: [3]output.commands.Command = undefined;
+    for (&copied, 0..) |*command, row| command.* = s.glyphs[row][0];
+    try owner.feed("\x1b[2S");
+    owner.selectHistoryOffset(2);
+    try owner.flush();
+    for (copied, 0..) |command, row| try std.testing.expectEqualDeep(command, s.glyphs[row][0]);
+    try owner.release(held.?);
+    held = null;
+    const next = try owner.hold();
+    defer release(owner, next);
+    try std.testing.expectEqual(@as(u32, 2), next.snapshot.history_offset);
+    for (expected_counts, 0..) |count, row| {
+        try std.testing.expectEqual(count, next.snapshot.glyphs[row].len);
+        if (count != 0) try std.testing.expectEqualDeep(copied[row], next.snapshot.glyphs[row][0]);
+        try std.testing.expect(owner.observation().semanticView(2).cellInfoAt(@intCast(row), 0).attrs.baseline == .small);
+    }
+}

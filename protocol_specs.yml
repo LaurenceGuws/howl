@@ -1043,8 +1043,9 @@ specifications:
         - libvterm.sgr.fg_extended
         - libvterm.sgr.bg_extended
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
-        test: 'terminal: pinned libvterm small font attribute is absent from native baseline SGR'
+        test: 'terminal: Mintty combined baseline replaces libvterm last-wins alignment'
         relation: protocol-family
+        note: Earlier negative last-wins proof superseded by accepted Mintty combined baseline and actual small-ink projection.
         legacy_records:
         - libvterm.sgr.small_baseline
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
@@ -7714,12 +7715,25 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6048-6070; misc.c:8114-8137; ptyx.h:1459-1470,3618
+        howl_qualification_20261127_mintty_rendition_01:
+          scope: Adjacent accepted Mintty rendition extends the existing bounded selective mask with independent73 and74 selections
+            and both in default selection, directly supported by pinned Mintty termout.c:3390 onward. No original xterm numeric
+            selector reinterpretation, new stack owner or capacity change. Other extended mask fields and overflow/lifetime
+            differences remain separate.
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
+            and private namespace decisions; VT/output red-green, no blanket FULL promotion
+          baseline: fe940224d9b2ed37be360299488eb492ed1a7598
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: XTPUSHSGR restores selected rendition with bounded stack truth'
         relation: protocol-family
         legacy_records:
         - iterm2.csi.xtpushsgr
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty baseline flags compose regional patches and selective rendition stack restoration
+        relation: protocol-family
     - id: sgr-stack-pop
       section: Functions using CSI / XTPOPSGR, lines 1556-1558,1941-1943
       level: defined
@@ -7748,6 +7762,15 @@ specifications:
         pinned_source_observation:
           revision: 5afc76e089167da6d07c49334d0bf350377f6c0a
           location: charproc.c:6079-6083; misc.c:8188-8248
+        howl_qualification_20261127_mintty_rendition_01:
+          scope: Pop merges only selected script bits, including restoring an absent bit independently of its peer; default
+            restores both. Existing ten-entry LIFO owner and lifetime retained. Adjacent Mintty extension, not claim of original
+            xterm extended-mask support.
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
+            and private namespace decisions; VT/output red-green, no blanket FULL promotion
+          baseline: fe940224d9b2ed37be360299488eb492ed1a7598
       test_locations:
       - file: howl-vt/test/unit/terminal_end_to_end_test.zig
         test: 'terminal: XTPUSHSGR restores selected rendition with bounded stack truth'
@@ -7755,6 +7778,9 @@ specifications:
         legacy_records:
         - iterm2.csi.xtpopsgr_brace
         - iterm2.csi.xtpopsgr_q
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty baseline flags compose regional patches and selective rendition stack restoration
+        relation: protocol-family
     - id: sgr-rectangle-report
       section: Functions using CSI / XTREPORTSGR, lines 1886-1890
       level: defined
@@ -20713,6 +20739,9 @@ specifications:
       - file: howl-vt/test/output_owner.zig
         test: DECCARA continuation background remains independent across history lead eviction
         relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty baseline flags compose regional patches and selective rendition stack restoration
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_deccara_01:
           scope: 'Existing shared SGR patch and accepted bare/coordinate-only/zero distinction retained. Originating Kitty
@@ -20757,6 +20786,16 @@ specifications:
             existing original DEC STD070 character-column rule; deterministic split/geometry red-green and output-owner positive
             history proof; no blanket FULL promotion
           baseline: 17d4c209e7bccf63a4f54e6c815d3649cd718186
+        howl_qualification_20261127_mintty_rendition_01:
+          scope: Shared regional SGR patch now composes independent script bits relative to each selected cell, with reset75/0
+            converting subsequent assignment to absolute. Tests all four seeds across existing selector matrix and selected
+            mixed reset scripts, exact common report and independent write pen. No new region storage or change to coordinate
+            grammar.
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
+            and private namespace decisions; VT/output red-green, no blanket FULL promotion
+          baseline: fe940224d9b2ed37be360299488eb492ed1a7598
   kitty_underlines:
     title: Kitty colored and styled underlines
     author: Kovid Goyal / kitty
@@ -30386,6 +30425,48 @@ specifications:
         - url: https://raw.githubusercontent.com/mintty/mintty/b9a91900614414dd2a5db1c82cc4e1768955c434/src/termout.c
           sha256: a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
           revision: b9a91900614414dd2a5db1c82cc4e1768955c434
+        howl_qualification_20261127_mintty_rendition_01:
+          scope: 'Accepted Captain independent-script profile: two-bit Baseline backing values normal0,raised1,lowered2,small3,
+            preserves cell size and cold attrs. 73/74 union flags in either order, repeated set no-op,75/0 clear both. Relative
+            baseline composition in shared DECCARA patch; reset converts patch to absolute assignment. Common-region report
+            intersects bits, full report emits73;74 for both. Selective SGR stack supports independent73/74 and both in existing
+            bounded default mask, per pinned Mintty termout.c XTPUSHSGR, original xterm subset unchanged. Every split across
+            both CSI introducers, exact report and independent pen/rectangle/stack proofs, all four baseline seeds in shared
+            patch differential. Pinned wintext.c FONT_ZOOMSMALL uses 12/20 scaling and 3/10 horizontal, 1/8 raised,13/32 lowered
+            offsets; Howl composes 3/5 sampled atlas projection within existing ordinary/OSC66 render rectangle, bounded rounded
+            extents, actual normal-font baseline for combined state. Actual font and generated block output smaller with same
+            source resource and unchanged cell occupancy. No new native font set or separate raster owner. Sampling is not
+            a newly hinted 60%-size native font, and source-inspired geometry not byte-exact Windows raster. Actual retained
+            output also verifies integer scale2 and half-fraction scale2 script ink, RGBA color, exact row strips and immutable
+            held commands across two-row scroll/history projection. Tiny fonts, arbitrary sizing/fraction/DEC combinations,
+            history reflow and physical pixel proof remain scoped.'
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
+            and private namespace decisions; VT/output red-green, no blanket FULL promotion
+          baseline: fe940224d9b2ed37be360299488eb492ed1a7598
+      test_locations:
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty independent baseline flags survive every split and exact rendition reports
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: Mintty baseline flags compose regional patches and selective rendition stack restoration
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Mintty baseline presentation shrinks generated and font ink without changing occupancy
+        relation: protocol-family
+      - file: howl-vt/test/output_owner.zig
+        test: Mintty script ink composes with sized text and survives the retained history boundary
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: SGR font and baseline retain exact cell save resize and bank state'
+        relation: protocol-family
+      - file: howl-vt/test/unit/terminal_end_to_end_test.zig
+        test: 'terminal: Mintty combined baseline replaces libvterm last-wins alignment'
+        relation: protocol-family
+      - file: howl-vt/src/screen.zig
+        test: shared SGR patch matches direct rendition across supported selectors
+        relation: protocol-family
     - id: private-vertical-align
       section: Tips / Text attributes
       level: defined
@@ -30411,6 +30492,19 @@ specifications:
           location: collect_decsgr
           meaning: Private super/subscript aliases4/5/24 are named NGR (not implemented) in parser-decsgr.hh, ignored by actual
             collector. Only reset and overline routes observed.
+        howl_qualification_20261127_mintty_rendition_01:
+          scope: 'Existing accepted xterm XTQMODKEYS precedence retained: private ?4m exact query reply, ?5m and ?24m inert,
+            grouped extra operands do not mutate or reply. This is evidence of the selected conflict policy, not implementation
+            of Mintty private aliases. Standard script bits are qualified separately.'
+          method: Pinned Mintty Tips wiki951dd5cc92d88e930c8ff143d92a5aec6730413d SHA256 6dc0ef4830d1f021836c998f987cf87ba1f6e6b365d7629b4649df938cdf7df1,
+            b9a91900614414dd2a5db1c82cc4e1768955c434 termout.c SHA256 a9eb3107d8494a91655ad1dee9e6bfaf1522646523f775d1511e51a942b514e1
+            and wintext.c SHA256 ad4c5a34d15a18b502210fb5bcfed39f3e6849a19619ff45698407fb2b2744db; accepted sgr-super-sub-combination
+            and private namespace decisions; VT/output red-green, no blanket FULL promotion
+          baseline: fe940224d9b2ed37be360299488eb492ed1a7598
+      test_locations:
+      - file: howl-vt/test/unit/terminal_modes_test.zig
+        test: libvterm private DECSGR baseline collides with native modifyOtherKeys query
+        relation: protocol-family
     - id: shadow
       section: Tips / Text attributes; Changelog 3.0.1
       level: defined

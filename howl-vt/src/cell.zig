@@ -82,11 +82,23 @@ pub const UnderlineStyle = enum(u3) {
     dashed,
 };
 
-/// Identifies the baseline displacement retained for one terminal cell.
+/// Identifies two independent script flags in the existing two-bit field.
+/// Both flags select reduced-size ink on the normal baseline.
 pub const Baseline = enum(u2) {
-    normal,
-    raised,
-    lowered,
+    normal = 0,
+    raised = 1,
+    lowered = 2,
+    small = 3,
+
+    /// Enables the selected script flags without clearing their peers.
+    pub fn merge(self: Baseline, other: Baseline) Baseline {
+        return @fromBackingInt(@backingInt(self) | @backingInt(other));
+    }
+
+    /// Retains only script flags shared by both renditions.
+    pub fn common(self: Baseline, other: Baseline) Baseline {
+        return @fromBackingInt(@backingInt(self) & @backingInt(other));
+    }
 };
 
 /// Distinguishes ISO guarded areas from DEC selective-erase protection.

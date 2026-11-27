@@ -3526,11 +3526,10 @@ test "terminal: SGR rapid blink is an exact fragmented no-op" {
     try std.testing.expect(!(try terminal.feed("\x1b[6m")).stateChanged());
 }
 
-test "terminal: pinned libvterm small font attribute is absent from native baseline SGR" {
-    // Pinned libvterm src/pen.c:vterm_state_setpen(73/74/75) sets
-    // both VTERM_ATTR_SMALL and VTERM_ATTR_BASELINE independently.
-    // Howl retains the baseline value, but CellAttrs has no SMALL
-    // semantic or small-font raster control for this SGR family.
+test "terminal: Mintty combined baseline replaces libvterm last-wins alignment" {
+    // The accepted Mintty profile combines 73 and 74 into small
+    // baseline-aligned ink, rather than libvterm's last-wins alignment.
+    // All four script states fit in the existing two-bit field.
     try std.testing.expect(!@hasField(Terminal.CellAttrs, "small"));
     var terminal = try Terminal.init(std.testing.allocator, 1, 8);
     defer terminal.deinit();
@@ -3538,7 +3537,7 @@ test "terminal: pinned libvterm small font attribute is absent from native basel
     const view = terminal.semanticView(0);
     for ([_]struct { col: u16, baseline: Terminal.Baseline, letter: u21 }{
         .{ .col = 0, .baseline = .raised, .letter = 'A' },
-        .{ .col = 1, .baseline = .lowered, .letter = 'B' },
+        .{ .col = 1, .baseline = .small, .letter = 'B' },
         .{ .col = 2, .baseline = .normal, .letter = 'C' },
     }) |case| {
         const cell = view.cellInfoAt(0, case.col);
@@ -3567,7 +3566,7 @@ test "terminal: SGR font and baseline retain exact cell save resize and bank sta
     try std.testing.expectEqual(@as(u4, 9), raised.font);
     try std.testing.expectEqual(Terminal.Baseline.raised, raised.baseline);
     try std.testing.expectEqual(@as(u4, 0), lowered.font);
-    try std.testing.expectEqual(Terminal.Baseline.lowered, lowered.baseline);
+    try std.testing.expectEqual(Terminal.Baseline.small, lowered.baseline);
     try std.testing.expectEqual(raised, restored);
 
     try terminal.resize(3, 8);
@@ -6709,4 +6708,49 @@ test "DECCARA uses addressable character columns on DEC double width and height 
         try feed(&terminal, "\x1b[1;1H\x1b#5");
         for (4..8) |col| try std.testing.expectEqualDeep(before[col], terminal.semanticView(0).cellInfoAt(0, @intCast(col)));
     }
+}
+
+test "Mintty independent baseline flags survive every split and exact rendition reports" {
+    for ([_][]const u8{
+        "\x1b[73mA\x1b[74mB\x1b[75;74mC\x1b[73mD\x1b[0mE\x1b[73;74mF\x1bP$qm\x1b\\",
+        "\x9b73mA\x9b74mB\x9b75;74mC\x9b73mD\x9b0mE\x9b73;74mF\x90$qm\x9c",
+    }) |wire| {
+        for (0..wire.len + 1) |split| {
+            var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+            defer terminal.deinit();
+            try feed(&terminal, wire[0..split]);
+            try feed(&terminal, wire[split..]);
+            const view = terminal.semanticView(0);
+            for ([_]u2{ 1, 3, 2, 3, 0, 3 }, 0..) |bits, col| {
+                const cell = view.cellInfoAt(0, @intCast(col));
+                try std.testing.expectEqual(bits, @as(u2, @backingInt(cell.attrs.baseline)));
+                try std.testing.expectEqual(@as(u32, @intCast('A' + col)), cell.codepoint);
+                try std.testing.expectEqual(@as(u8, 1), cell.width);
+                try std.testing.expectEqual(@as(u8, 1), cell.height);
+                try std.testing.expectEqual(@as(u4, 0), cell.subscale_n);
+                try std.testing.expectEqual(@as(u4, 0), cell.subscale_d);
+            }
+            try std.testing.expectEqual(@as(u16, 6), view.cursor_col);
+            try std.testing.expectEqualStrings("\x1bP1$r0;73;74m\x1b\\", terminal.replyBytes());
+            try std.testing.expect(!(try terminal.feed("\x1b[74;73m")).stateChanged());
+        }
+    }
+}
+
+test "Mintty baseline flags compose regional patches and selective rendition stack restoration" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try feed(&terminal, "\x1b[73mA\x1b[75;74mB\x1b[75mC\x1b[73;74mD\x1b[2*x");
+    try feed(&terminal, "\x1b[1;1;1;3;73$r");
+    const view = terminal.semanticView(0);
+    for ([_]u2{ 1, 3, 1, 3 }, 0..) |bits, col| try std.testing.expectEqual(bits, @as(u2, @backingInt(view.cellInfoAt(0, @intCast(col)).attrs.baseline)));
+    try feed(&terminal, "\x1b[1;1;1;4#|\x1b[1;2;1;2;74;75;73$r\x1b[1;2;1;2#|");
+    try std.testing.expectEqualStrings("\x1b[0;73m\x1b[0;73m", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    // Whole-stack save restores both independent bits; subset save only
+    // restores the named bit, leaving its peer unchanged.
+    try feed(&terminal, "\x1b[#{\x1b[75m\x1b[#}E\x1b[73#{\x1b[75;74m\x1b[#}F\x1b[74#{\x1b[75;73m\x1b[#}G");
+    for (4..7) |col| try std.testing.expectEqual(@as(u2, 3), @as(u2, @backingInt(terminal.semanticView(0).cellInfoAt(0, @intCast(col)).attrs.baseline)));
+    try feed(&terminal, "\x1b[75m\x1b[73#{\x1b[73;74m\x1b[#}H");
+    try std.testing.expectEqual(@as(u2, 2), @as(u2, @backingInt(terminal.semanticView(0).cellInfoAt(0, 7).attrs.baseline)));
 }
