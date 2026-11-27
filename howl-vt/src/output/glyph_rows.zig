@@ -30,7 +30,7 @@ pub fn Emitter(comptime instrumented: bool) type {
             presentation: *const VT.Presentation,
         };
         /// Partitions the caller’s output into background, decoration and glyph spans.
-        pub const Counts = struct { background_end: usize, decoration_end: usize, count: usize };
+        pub const Counts = struct { background_end: usize, decoration_end: usize, count: usize, has_blink: bool };
         // Fixed view limits scratch, not retained output. Output capacity is caller-owned.
         const max_columns = @import("limits").maximum_columns;
         const scalar_limit = 24;
@@ -44,7 +44,8 @@ pub fn Emitter(comptime instrumented: bool) type {
                 value.* += @sizeOf(frame.Command);
             };
         }
-        fn markBlink(output: []frame.Command, first: usize, used: usize) void {
+        fn markBlink(output: []frame.Command, first: usize, used: usize, has_blink: *bool) void {
+            if (first != used) has_blink.* = true;
             for (output[first..used]) |*command| switch (command.*) {
                 .solid => |*value| value.blink = true,
                 .alpha_mask => |*value| value.blink = true,
@@ -204,6 +205,7 @@ pub fn Emitter(comptime instrumented: bool) type {
             var used: usize = 0;
             var background_end: usize = 0;
             var decoration_end: usize = 0;
+            var has_blink = false;
             for (output[0..counts.count], 0..) |original, i| {
                 if (i == counts.background_end) background_end = used;
                 if (i == counts.decoration_end) decoration_end = used;
@@ -225,13 +227,14 @@ pub fn Emitter(comptime instrumented: bool) type {
                     },
                 };
                 if (visible) {
+                    if (counts.has_blink and i >= counts.background_end and frame.blinks(command)) has_blink = true;
                     output[used] = command;
                     used += 1;
                 }
             }
             if (counts.background_end == counts.count) background_end = used;
             if (counts.decoration_end == counts.count) decoration_end = used;
-            return .{ .background_end = background_end, .decoration_end = decoration_end, .count = used };
+            return .{ .background_end = background_end, .decoration_end = decoration_end, .count = used, .has_blink = has_blink };
         }
         // History decoding is the only case that needs a full temporary row.
         // Keep that storage off the live-screen path.
@@ -316,6 +319,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 try solid(ctx.command_bytes_written, output, &used, .{ .x = @as(i32, @intCast(start)) * ctx.cell_width, .y = 0, .width = @as(u16, @intCast(column - start)) * ctx.cell_width, .height = ctx.cell_height }, row_clip, c.bg);
             }
             const background_end = used;
+            var has_blink = false;
             const metrics = cache.fontFaces(ctx.atlas).metrics();
             const line_offset = @divFloor(@as(i32, ctx.cell_height) - metrics.line_height, 2);
             if (!uniform or span.attrs.underline or span.attrs.strikethrough or span.attrs.enclosure != .none) for (cells, 0..) |cell, col| {
@@ -325,13 +329,13 @@ pub fn Emitter(comptime instrumented: bool) type {
                     const lead = screen.retainedCellInfoAt(retained_row - cell.y, @intCast(col)) orelse return error.UnsupportedScene;
                     if (!hasDecorations(lead)) continue;
                     const start = used;
-                    defer if (lead.attrs.blink) markBlink(output, start, used);
+                    defer if (lead.attrs.blink) markBlink(output, start, used, &has_blink);
                     try appendDecorations(ctx, output, &used, lead, col, cell.y, row_clip, line_offset, metrics, try colors(lead, p));
                     continue;
                 }
                 if (!hasDecorations(cell)) continue;
                 const start = used;
-                defer if (cell.attrs.blink) markBlink(output, start, used);
+                defer if (cell.attrs.blink) markBlink(output, start, used, &has_blink);
                 const c = shared_colors orelse try colors(cell, p);
                 try appendDecorations(ctx, output, &used, cell, col, 0, row_clip, line_offset, metrics, c);
             };
@@ -352,7 +356,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                     const lead = screen.retainedCellInfoAt(lead_row, @intCast(col)) orelse return error.UnsupportedScene;
                     if (lead.attrs.invisible) continue;
                     const start = used;
-                    defer if (lead.attrs.blink) markBlink(output, start, used);
+                    defer if (lead.attrs.blink) markBlink(output, start, used, &has_blink);
                     const sequence = screen.retainedCellScalarsAt(lead_row, @intCast(col), &scalars);
                     if (sequence.len != 0 and sequence[0] != 0x10eeee and !(sequence.len == 1 and sequence[0] == ' ')) {
                         const c = try colors(lead, p);
@@ -362,7 +366,7 @@ pub fn Emitter(comptime instrumented: bool) type {
                 }
                 if (cell.attrs.invisible) continue;
                 const start = used;
-                defer if (cell.attrs.blink) markBlink(output, start, used);
+                defer if (cell.attrs.blink) markBlink(output, start, used, &has_blink);
                 const sequence = if (cell.combining_len == 0) blk: {
                     scalars[0] = cell.codepoint;
                     break :blk scalars[0..@as(usize, if (cell.codepoint == 0) 0 else 1)];
@@ -453,7 +457,7 @@ pub fn Emitter(comptime instrumented: bool) type {
             if (instrumented) if (uniform) if (ctx.full_ascii_rows) |counter| {
                 counter.* += 1;
             };
-            return .{ .background_end = background_end, .decoration_end = decoration_end, .count = used };
+            return .{ .background_end = background_end, .decoration_end = decoration_end, .count = used, .has_blink = has_blink };
         }
 
         // Only an oversized contextual run needs this full-row stack lane.

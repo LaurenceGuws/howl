@@ -591,3 +591,118 @@ test "automatic bound admits dense framed shadow double underline and strike row
     try std.testing.expectEqual(@as(usize, 5120), held.snapshot.decorations[0].len);
     try std.testing.expectEqual(@as(usize, 1), held.snapshot.backgrounds[0].len);
 }
+
+fn expectBlinkRows(cut: state.Snapshot) !void {
+    for (0..cut.rows) |row| {
+        var expected = false;
+        for (cut.glyphs[row]) |cmd| expected = output.commands.blinks(cmd) or expected;
+        for (cut.decorations[row]) |cmd| expected = output.commands.blinks(cmd) or expected;
+        for (cut.backgrounds[row]) |cmd| try std.testing.expect(!output.commands.blinks(cmd));
+        try std.testing.expectEqual(expected, cut.text_blink_rows[row]);
+    }
+    for (cut.text_blink_rows[cut.rows..]) |blink| try std.testing.expect(!blink);
+}
+
+test "blink facts travel with immutable row blocks through rebind and failed staging" {
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    const store = try makeStore(threaded.io());
+    defer output.releasePresentationStore(store);
+    const owner = try state.State(true).initShared(a, store, .{ .history_capacity = 8 });
+    defer owner.deinit();
+    try owner.resize(4, 8);
+    try owner.feed("\x1b[?25l\x1b[5mA\x1b[0m\x1b[2;1H\x1b[5;51m \x1b[0m\x1b[3;1H\x1b[5;8mX\x1b[0;5m \x1b[0m");
+    try owner.flush();
+    const old = try owner.hold();
+    var held = true;
+    defer if (held) owner.release();
+    try expectBlinkRows(old);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, false, false }, old.text_blink_rows[0..4]);
+    const before = try a.dupe(output.commands.Command, old.glyphs[0]);
+    defer a.free(before);
+    const rebinds = owner.stats.broad_rebind_rows;
+
+    // New glyph admission must rebind the unchanged blinking first row.
+    // Reject after staging resource identities but before accepting any block.
+    try owner.feed("\x1b[4;1H界");
+    owner.fail_after_resource = true;
+    try std.testing.expectError(error.InjectedResourceFailure, owner.flush());
+    try std.testing.expect(owner.stats.broad_rebind_rows > rebinds);
+    try expectBlinkRows(old);
+    try std.testing.expectEqualDeep(before, old.glyphs[0]);
+    owner.release();
+    held = false;
+    const rejected = try owner.hold();
+    held = true;
+    try expectBlinkRows(rejected);
+    try std.testing.expectEqualDeep(old.text_blink_rows, rejected.text_blink_rows);
+    try std.testing.expectEqualDeep(old.resource, rejected.resource);
+    try std.testing.expectEqual(@as(usize, 0), rejected.glyphs[3].len);
+
+    owner.fail_after_resource = false;
+    try owner.flush();
+    try expectBlinkRows(rejected);
+    try std.testing.expectEqualDeep(before, rejected.glyphs[0]);
+    owner.release();
+    held = false;
+    const rebound = try owner.hold();
+    held = true;
+    try expectBlinkRows(rebound);
+    try std.testing.expect(rebound.resource.generation != old.resource.generation);
+    try std.testing.expect(rebound.glyphs[3].len != 0);
+    try std.testing.expect(rebound.text_blink_rows[0] and rebound.text_blink_rows[1]);
+    owner.release();
+    held = false;
+
+    // DEC height transforms can clip a decoration completely. The fact
+    // describes the surviving commands, not merely the source attributes.
+    try owner.feed("\x1b[3;1H\x1b#3\x1b[5;4m \x1b[0m\x1b[4;1H\x1b#4\x1b[5;4m \x1b[0m");
+    try owner.flush();
+    const sized = try owner.hold();
+    held = true;
+    try expectBlinkRows(sized);
+    try std.testing.expect(!sized.text_blink_rows[2]);
+    try std.testing.expect(sized.text_blink_rows[3]);
+    try owner.feed("\x1b[1S");
+    try owner.flush();
+    try expectBlinkRows(sized);
+    owner.release();
+    held = false;
+    const rotated = try owner.hold();
+    held = true;
+    try expectBlinkRows(rotated);
+    try std.testing.expect(rotated.text_blink_rows[0]);
+    try std.testing.expect(!rotated.text_blink_rows[3]);
+    owner.release();
+    held = false;
+
+    owner.selectHistoryOffset(1);
+    try owner.flush();
+    const history = try owner.hold();
+    held = true;
+    try expectBlinkRows(history);
+    try std.testing.expect(history.text_blink_rows[0] and history.text_blink_rows[1]);
+    owner.release();
+    held = false;
+
+    owner.selectHistoryOffset(0);
+    try owner.feed("\x1b[?1049h");
+    try owner.flush();
+    const alternate = try owner.hold();
+    held = true;
+    try expectBlinkRows(alternate);
+    try std.testing.expectEqualSlices(bool, &.{ false, false, false, false }, alternate.text_blink_rows[0..4]);
+    try owner.feed("\x1b[?1049l\x1b[H\x1b[2J");
+    try owner.resize(2, 8);
+    // Reflow may restore retained history into the replacement viewport.
+    // Clear the final geometry before asserting absence of emitted blink.
+    try owner.feed("\x1b[0m\x1b[2J");
+    try owner.flush();
+    try expectBlinkRows(alternate);
+    owner.release();
+    held = false;
+    const cleared = try owner.hold();
+    held = true;
+    try expectBlinkRows(cleared);
+    try std.testing.expectEqualSlices(bool, &.{ false, false }, cleared.text_blink_rows[0..2]);
+}

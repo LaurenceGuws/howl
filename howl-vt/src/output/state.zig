@@ -63,6 +63,7 @@ const Block = struct {
     background_end: usize = 0,
     decoration_end: usize = 0,
     count: usize = 0,
+    has_blink: bool = false,
 };
 /// Conservative horizontal pixel band for one exact output transition.
 /// A null band means full-row repair; an empty band needs no repaint.
@@ -761,25 +762,6 @@ pub fn State(comptime instrumented: bool) type {
             const block = &self.cursor_slot.blocks[self.cursor_slot.current];
             return block.commands[0..block.count];
         }
-        /// Borrows accepted glyph commands for one logical output row.
-        pub fn rowCommands(self: *const Candidate, logical_row: usize) []const frame.Command {
-            std.debug.assert(self.ready and logical_row < self.accepted_rows);
-            const slot = &self.slots[(logical_row + self.origin) % self.accepted_rows];
-            const block = &slot.blocks[slot.current];
-            return block.commands[block.decoration_end..block.count];
-        }
-        /// Borrows accepted background commands for one logical output row.
-        pub fn rowBackgroundCommands(self: *const Candidate, logical_row: usize) []const frame.Command {
-            const slot = &self.slots[(logical_row + self.origin) % self.accepted_rows];
-            const block = &slot.blocks[slot.current];
-            return block.commands[0..block.background_end];
-        }
-        /// Borrows accepted decoration commands for one logical output row.
-        pub fn rowDecorationCommands(self: *const Candidate, logical_row: usize) []const frame.Command {
-            const slot = &self.slots[(logical_row + self.origin) % self.accepted_rows];
-            const block = &slot.blocks[slot.current];
-            return block.commands[block.background_end..block.decoration_end];
-        }
         /// Pins current row/resource blocks and returns immutable borrowed output.
         pub fn hold(self: *Candidate) HoldError!Snapshot {
             if (!self.ready) return error.NotReady;
@@ -788,25 +770,16 @@ pub fn State(comptime instrumented: bool) type {
             result.visual_context = self.visual_context;
             result.graphics = self.graphics_cuts[self.graphics_current].view();
             result.row_origin = self.origin;
-            for (self.slots[0..self.accepted_rows]) |*slot| slot.held = slot.current;
             for (0..self.accepted_rows) |row| {
-                result.row_generations[row] = self.slots[(row + self.origin) % self.accepted_rows].generation;
-                result.row_damage[row] = self.slots[(row + self.origin) % self.accepted_rows].damage;
-                result.glyphs[row] = self.rowCommands(row);
-                result.backgrounds[row] = self.rowBackgroundCommands(row);
-                result.decorations[row] = self.rowDecorationCommands(row);
-                for (result.glyphs[row]) |command| {
-                    if (frame.blinks(command)) {
-                        result.text_blink_rows[row] = true;
-                        break;
-                    }
-                }
-                if (!result.text_blink_rows[row]) for (result.decorations[row]) |command| {
-                    if (frame.blinks(command)) {
-                        result.text_blink_rows[row] = true;
-                        break;
-                    }
-                };
+                const slot = &self.slots[(row + self.origin) % self.accepted_rows];
+                slot.held = slot.current;
+                const block = &slot.blocks[slot.current];
+                result.row_generations[row] = slot.generation;
+                result.row_damage[row] = slot.damage;
+                result.glyphs[row] = block.commands[block.decoration_end..block.count];
+                result.backgrounds[row] = block.commands[0..block.background_end];
+                result.decorations[row] = block.commands[block.background_end..block.decoration_end];
+                result.text_blink_rows[row] = block.has_blink;
             }
             result.text_blink_visible = self.accepted_text_blink_visible;
             self.resource_held = self.resource_current;
@@ -922,6 +895,7 @@ pub fn State(comptime instrumented: bool) type {
                 block.count = 0;
                 block.background_end = 0;
                 block.decoration_end = 0;
+                block.has_blink = false;
                 // An untouched blank row emits no commands. Keep its staging
                 // storage empty; the first actual command earns a reservation.
                 const counts = while (true) {
@@ -953,6 +927,7 @@ pub fn State(comptime instrumented: bool) type {
                 block.count = counts.count;
                 block.background_end = counts.background_end;
                 block.decoration_end = counts.decoration_end;
+                block.has_blink = counts.has_blink;
                 staged[physical] = next;
                 rebuilt += 1;
             }
@@ -1005,6 +980,7 @@ pub fn State(comptime instrumented: bool) type {
                         target.count = source.count;
                         target.background_end = source.background_end;
                         target.decoration_end = source.decoration_end;
+                        target.has_blink = source.has_blink;
                         @memcpy(target.commands[0..target.count], source.commands[0..source.count]);
                         staged[physical] = next;
                         if (instrumented) self.stats.command_bytes_copied += source.count * @sizeOf(frame.Command);
