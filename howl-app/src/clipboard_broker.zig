@@ -123,6 +123,14 @@ pub const Broker = struct {
         }
     }
 
+    /// An observed newer clipboard selection supersedes uncommitted work.
+    /// Do not change focus, inherit consent or undo an admitted provider call.
+    pub fn supersede(self: *Broker) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.slot) |*slot| revoke(slot);
+    }
+
     /// Copied current focus fact, for main-thread reconciliation.
     pub fn focusedOwner(self: *Broker) ?u64 {
         self.mutex.lockUncancelable(self.io);
@@ -558,4 +566,31 @@ test "clipboard owner deadline survives expired main queries and unrelated worke
     try std.testing.expectEqual(Service.progressed, try broker.service(&owner, deadline));
     try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EPERM:id=route\x1b\\", owner.replyBytes());
     try std.testing.expect(broker.deadlineFor(identity) == null);
+}
+
+test "clipboard supersession revokes prepared data without changing focus or replaying a provider" {
+    const a = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(a, .{});
+    defer threaded.deinit();
+    var broker = Broker.init(threaded.io());
+    defer broker.deinit();
+    var terminal = try Terminal.init(a, 3, 8);
+    defer terminal.deinit();
+    const ticket = try prepare(&broker, &terminal, 1);
+    broker.supersede();
+    try std.testing.expectEqual(@as(?u64, ticket.owner), broker.focusedOwner());
+    try std.testing.expect(broker.takePublication(ticket, 2) == null);
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 2));
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=EPERM:id=route\x1b\\", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try terminal.declineKittyClipboard(terminal.consequenceHead().?.id());
+    try std.testing.expect(broker.noticeFor(ticket.owner) == null);
+    const fresh = try prepare(&broker, &terminal, 3);
+    var publication = broker.takePublication(fresh, 3).?;
+    defer publication.data.deinit();
+    broker.supersede();
+    try std.testing.expect(broker.recordOutcome(publication.completion, .DONE));
+    try std.testing.expectEqual(Service.progressed, try broker.service(&terminal, 4));
+    try std.testing.expectEqualStrings("\x1b]5522;type=write:status=DONE:id=route\x1b\\", terminal.replyBytes());
+    try std.testing.expect(broker.takePublication(fresh, 4) == null);
 }

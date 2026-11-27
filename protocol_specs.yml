@@ -12570,6 +12570,15 @@ specifications:
       - file: howl-app/src/clipboard_broker.zig
         test: clipboard owner deadline survives expired main queries and unrelated worker turns
         relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard callback retains moved binary aliases through replacement and cleanup
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard failed registrations separate retirement from return value
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard supersession revokes prepared data without changing focus or replaying a provider
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Retain exact bounded OSC5522 packet ownership in existing clipboard FIFO. Recognized payload preserves ignored
@@ -12624,6 +12633,19 @@ specifications:
             lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
             deterministic deadline interleaving proof; no actual desktop clipboard provider.
           baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
+        howl_qualification_20261127_kitty_clipboard_04d:
+          scope: Ordinary MIME write now selects native SDL provider in the Wayland app path; other drivers retain refusal. Provider-neutral
+            DONE acknowledges successful local submission under existing exact consent/owner/deadline, not receiving-client or
+            compositor confirmation. No VT change. Observed newer external clipboard update or local copy revokes uncommitted
+            write. Actual private-seat candidate exercised real consent and child reply order.
+          method: Operator selected provider-local DONE guarantee for portable future OS support, 2026-11-27. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9; kitty/clipboard.py285-300,480-488,
+            kitty/glfw.c3828-3843, glfw/input.c1575-1593 and glfw/wl_window.c2860-2889 show local commit without external acknowledgement.
+            Installed SDL3.4.20 native private-seat probe receipt 902394710de71637767366b19a25936cbf3fe7b168f92b0d6ee8623c028082a7
+            records false registration with externally readable offer and true return/owner event without external selection.
+            Current Zig adapter fault-injected ownership tests and actual private Wayland application synthetic consent/second-client
+            binary/alias/empty, routed DONE and supersession/EPERM/stale suppression evidence; see workstream wave04d.
+          baseline: d5feae8286d7d2fcc95ad6ca38892834b10a57d3
     - id: read
       section: Reading data from the system clipboard
       level: defined
@@ -12736,6 +12758,18 @@ specifications:
       - file: howl-app/src/clipboard_broker.zig
         test: clipboard owner deadline survives expired main queries and unrelated worker turns
         relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard callback retains moved binary aliases through replacement and cleanup
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard failed registrations separate retirement from return value
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard preflight failure leaves old offer and new caller data intact
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard supersession revokes prepared data without changing focus or replaying a provider
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: Current application declines selected valid write starts with EPERM and structurally unambiguous writes with
@@ -12781,6 +12815,21 @@ specifications:
             lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
             deterministic deadline interleaving proof; no actual desktop clipboard provider.
           baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
+        howl_qualification_20261127_kitty_clipboard_04d:
+          scope: Main-thread SDL callback owner moves complete prepared data once, preallocates own metadata before native call,
+            suppresses failed candidate callbacks, retains payload until cleanup/shutdown, and acknowledges local successful submission
+            only. Registration boolean is not cleanup or external selection oracle. Ambiguous callback adoption retains one revoked
+            candidate and refuses further attempts until cleanup; no rollback promise for preceding desktop offer. Real private
+            Wayland binary/alias/empty publication and ordered DONE; newer external selection revokes pending grant, stale parts
+            cannot overwrite it. Legacy copy policy otherwise unchanged.
+          method: Operator selected provider-local DONE guarantee for portable future OS support, 2026-11-27. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9; kitty/clipboard.py285-300,480-488,
+            kitty/glfw.c3828-3843, glfw/input.c1575-1593 and glfw/wl_window.c2860-2889 show local commit without external acknowledgement.
+            Installed SDL3.4.20 native private-seat probe receipt 902394710de71637767366b19a25936cbf3fe7b168f92b0d6ee8623c028082a7
+            records false registration with externally readable offer and true return/owner event without external selection.
+            Current Zig adapter fault-injected ownership tests and actual private Wayland application synthetic consent/second-client
+            binary/alias/empty, routed DONE and supersession/EPERM/stale suppression evidence; see workstream wave04d.
+          baseline: d5feae8286d7d2fcc95ad6ca38892834b10a57d3
     - id: password
       section: Avoiding repeated permission prompts
       level: defined
@@ -13002,6 +13051,9 @@ specifications:
       - file: howl-app/src/clipboard_broker.zig
         test: clipboard broker moves one complete offer and retries acknowledgement without replaying publication
         relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard callback retains moved binary aliases through replacement and cleanup
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_03:
           scope: Aliases share the target direct byte range, with forward target reservation supported before target data arrives.
@@ -13021,6 +13073,18 @@ specifications:
             write success/permission lines104-198. Installed SDL3.4.20 public header and separate SDL3.5.0 reference inspected
             in review; no SDL provider call in this qualification. Compile-negative handoff baseline and synthetic broker/VT tests.
           baseline: 06fdffd253028e70fd4b2c2b442ce9ad6fe5bbd6
+        howl_qualification_20261127_kitty_clipboard_04d:
+          scope: Provider callback returns immutable original data pointer for direct and aliased names; no payload duplication.
+            Exact synthetic binary/alias pointer and empty/unknown requests, replacement cleanup tested, independent Wayland clipboard
+            client reads actual synthetic alias and empty MIME from candidate.
+          method: Operator selected provider-local DONE guarantee for portable future OS support, 2026-11-27. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9; kitty/clipboard.py285-300,480-488,
+            kitty/glfw.c3828-3843, glfw/input.c1575-1593 and glfw/wl_window.c2860-2889 show local commit without external acknowledgement.
+            Installed SDL3.4.20 native private-seat probe receipt 902394710de71637767366b19a25936cbf3fe7b168f92b0d6ee8623c028082a7
+            records false registration with externally readable offer and true return/owner event without external selection.
+            Current Zig adapter fault-injected ownership tests and actual private Wayland application synthetic consent/second-client
+            binary/alias/empty, routed DONE and supersession/EPERM/stale suppression evidence; see workstream wave04d.
+          baseline: d5feae8286d7d2fcc95ad6ca38892834b10a57d3
     - id: base64-admission
       section: docs/clipboard.rst:23-45
       level: defined
@@ -13209,6 +13273,18 @@ specifications:
       - file: howl-app/src/clipboard_broker.zig
         test: clipboard owner deadline survives expired main queries and unrelated worker turns
         relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard callback retains moved binary aliases through replacement and cleanup
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard failed registrations separate retirement from return value
+        relation: protocol-family
+      - file: howl-app/src/native_clipboard.zig
+        test: native clipboard preflight failure leaves old offer and new caller data intact
+        relation: protocol-family
+      - file: howl-app/src/clipboard_broker.zig
+        test: clipboard supersession revokes prepared data without changing focus or replaying a provider
+        relation: protocol-family
       evidence:
         howl_qualification_20261127_kitty_clipboard_01:
           scope: No active write is admitted by this profile; continuations, aliases and end are ignored after denial. No multipart
@@ -13251,6 +13327,21 @@ specifications:
             lines104-198. Actual PTY worker and SDL dummy/software-renderer event/consent proof with synthetic publication callback;
             deterministic deadline interleaving proof; no actual desktop clipboard provider.
           baseline: ca62894db854c708fe326f36df9833cfbc1fbd5c
+        howl_qualification_20261127_kitty_clipboard_04d:
+          scope: Own MIME-name/offer allocations complete before native call; actual complete data transferred once to callback
+            owner; separate in-call registration guard and cleanup retirement. Early synchronous failure cleanup and late failure
+            retained callback modeled; revoke subsequent callback access before clear but preserve any already borrowed bytes
+            until cleanup. False clear may still retire; uncertain candidate remains bounded through shutdown. New local copy/observed
+            external clipboard update revokes uncommitted slot without falsifying admitted outcome. Actual64MiB prior decoded
+            owner proof not entire desktop transfer; no all-backend or clipboard rollback guarantee.
+          method: Operator selected provider-local DONE guarantee for portable future OS support, 2026-11-27. Pinned Kitty a79f376b85fd95e3dfd0589877123996bacd4184
+            clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9; kitty/clipboard.py285-300,480-488,
+            kitty/glfw.c3828-3843, glfw/input.c1575-1593 and glfw/wl_window.c2860-2889 show local commit without external acknowledgement.
+            Installed SDL3.4.20 native private-seat probe receipt 902394710de71637767366b19a25936cbf3fe7b168f92b0d6ee8623c028082a7
+            records false registration with externally readable offer and true return/owner event without external selection.
+            Current Zig adapter fault-injected ownership tests and actual private Wayland application synthetic consent/second-client
+            binary/alias/empty, routed DONE and supersession/EPERM/stale suppression evidence; see workstream wave04d.
+          baseline: d5feae8286d7d2fcc95ad6ca38892834b10a57d3
     - id: paste-password
       section: docs/clipboard.rst:200-221,264-266
       level: defined
@@ -42238,10 +42329,10 @@ reconciliation:
       decoded chunk bytes and order, routed OK/DATA/DONE and opening errors, typed listing including empty and exact4096
       boundary, malformed/wrong-head/location/order/size rejection, allocation and reply pressure retry, active-head consumption
       protection and RIS revocation.
-    boundary: Caller supplies data and permission; no actual host clipboard reads, native C positive helper, actual MIME
-      availability/permission UI, complete request metadata and all allocation/framing combinations, or paste token/precedence.
-      Caller-owned write assembly separately assessed by kitty-clipboard-caller-write-transaction. Direct caller must service
-      pending read before later reply-generating input; app continues to decline all MIME access.
+    boundary: Caller supplies data and permission; no actual host MIME clipboard reads, native C positive helper, actual
+      MIME availability/permission UI, complete request metadata and all allocation/framing combinations, or paste token/precedence.
+      Direct caller must service pending read before later reply-generating input. Application still refuses MIME reads;
+      selected ordinary native writes are separately assessed by kitty-clipboard-native-local-submission.
     not_full_because: Selected positive read wire machinery is qualified with synthetic caller data, not the full clipboard
       exchange, real host data access or supported paste event contract.
   applies_to:
@@ -42324,10 +42415,10 @@ reconciliation:
       final acceptance and DONE retry, malformed/incomplete/alias/cancellation/overflow abort, stale suppression, actual64MiB
       direct owner acceptance and plus-one rejection,256-name capacity, allocation and reply-pressure error recovery, reset
       revocation and independent completed ownership.
-    boundary: Synthetic data only; current ownership move precedes provider outcome acknowledgement under kitty-clipboard-host-write-broker,
-      superseding prior DONE-before-move API. Actual desktop provider, live worker/main scheduling, user-facing permission
-      UI, native C helpers, full metadata/routing/allocator matrix and paste events remain unqualified. Capacity tests are
-      actual decoded-owner packets, not full64MiB OSC wire. Local metadata and alias rules remain selected.
+    boundary: Synthetic decoded owner proof, current move before provider outcome under kitty-clipboard-host-write-broker;
+      actual selected native local submission separately assessed by kitty-clipboard-native-local-submission. Native C helpers,
+      full metadata/routing/allocator matrix and paste events unqualified. Capacity tests exercise actual decoded owner,
+      not full64MiB OSC wire/desktop path. Local metadata and alias rules remain selected.
     not_full_because: Selected bounded write and transfer machinery is qualified, but the full clipboard exchange, actual
       host data/permission and supported paste contract remain incomplete.
   applies_to:
@@ -42406,11 +42497,10 @@ reconciliation:
       with full reply queue and retry; focus/primary/background/busy refusals; stale consent, denial, prompt and prepared
       expiry; reset service and retired provider result; selected consequence drain preserves OSC52 and idle waiting; malformed
       replacement retires grant.
-    boundary: Selected synthetic write broker; selected real worker/main scheduler and pointer consent are separately assessed
-      by kitty-clipboard-selected-host-lifecycle. Default app provider remains absent and installed runtime unchanged. No
-      actual SDL clipboard calls, provider adoption/failure semantics, complete cross-thread stress, ordinary data reads,
-      positive inventory provider, primary MIME, tokens, native C helper or positive mode5522 advertisement. Shared slot
-      limits staging, not total retained OS clipboard bytes.
+    boundary: Selected synthetic broker and real worker/main scheduling under kitty-clipboard-selected-host-lifecycle; native
+      local provider under kitty-clipboard-native-local-submission. Shared slot limits staging, not total provider-owned
+      clipboard bytes. Complete cross-thread stress, ordinary data reads, positive inventory provider, primary MIME, tokens,
+      native C helper and positive mode5522 remain open.
     not_full_because: Write-only broker and owned handoff qualified without actual desktop provider, live consent and worker
       integration; complete underlying clipboard/paste exchange remains missing.
   applies_to:
@@ -42476,18 +42566,17 @@ reconciliation:
       test: clipboard owner deadline survives expired main queries and unrelated worker turns
       relation: protocol-family
     verified_subset: Actual worker wake events and eventfd decision/outcome, SDL dummy software-rendered consent, unseen/pre-display/wrong-window/stale-ticket
-      rejection, fresh exact click, synthetic binary alias provider, ordered child DONE then DSR and focus-loss EPERM
-      then DSR. Actual PTY hangup while awaiting consent retires slot before normal deadline. Deterministic owner deadline
-      survives expired main queries and sibling turns.
-    boundary: Explicitly selected test host with real PTY/worker and main-thread functions, SDL dummy/software renderer,
-      synthetic provider only. Default app provider remains absent; no real SDL clipboard access, physical/private compositor
-      prompt, full event-loop race stress, actual 30-second timeout duration witness or native callback adoption/failure
-      qualification. Reset observed by broker on worker service, HUP/exit/stop revokes before slot release; a provider
-      already admitted cannot be undone by later observed death. Existing 100ms status allocation retry may defer consequence
-      servicing, but provider deadline admission rejects expired grants. No ordinary positive data/list provider, primary
-      MIME, token, C helper or positive mode5522.
-    not_full_because: Selected worker/main write and consent path is qualified with synthetic provider; actual native
-      publication, bounded reads and full clipboard/paste contract remain incomplete.
+      rejection, fresh exact click, synthetic binary alias provider, ordered child DONE then DSR and focus-loss EPERM then
+      DSR. Actual PTY hangup while awaiting consent retires slot before normal deadline. Deterministic owner deadline survives
+      expired main queries and sibling turns.
+    boundary: Actual PTY/main scheduling and consent initially qualified with SDL dummy/software renderer and synthetic
+      provider; native ordinary Wayland local submission and private-seat consent/supersession separately assessed by kitty-clipboard-native-local-submission.
+      Full event-loop race stress, actual30s timeout duration, other platform backends, actual MIME reads/listing, primary
+      MIME, token, C helper and positive mode5522 remain unqualified. Reset/HUP/exit/stop revokes before slot release; admitted
+      provider effect cannot be undone. Existing100ms status allocation retry may defer consequence service, but expired
+      grants cannot admit provider action.
+    not_full_because: Selected worker/main write and consent path is qualified with synthetic provider; actual native publication,
+      bounded reads and full clipboard/paste contract remain incomplete.
   applies_to:
     clauses:
     - kitty_clipboard.envelope
@@ -42496,4 +42585,82 @@ reconciliation:
     - kitty_clipboard.mux-id
     - kitty_clipboard.write-data
     scope: Selected host write lifecycle and consent scheduling; no actual clipboard access or capability advertisement.
+- id: kitty-clipboard-native-local-submission
+  status: resolved-by-scoped-source-selection
+  decision_rule: portable-provider-acceptance-and-callback-lifetime
+  operator_alignment: '2026-11-27: operator explicitly selected the more basic local-provider guarantee for upcoming other
+    OS support. Retain previously approved consent, exact owner, one admitted transaction and revocation policies; no
+    external delivery acknowledgement requirement.'
+  accepted_interpretation:
+    effect: DONE means the selected local provider successfully accepted a complete authorized offer. It does not assert
+      compositor selection or external client receipt. Select the current SDL Wayland ordinary MIME write provider; other
+      drivers remain unselected. All metadata allocated before native call, transfer prepared payload once, callback owner
+      retains immutable shared bytes until cleanup. Track cleanup separately from boolean return and guard synchronous
+      cleanup during registration/clear. On failed registration revoke subsequent callback access before clear, retain
+      allocation until cleanup or provider shutdown, bound ambiguous adoption to one candidate and reject further native
+      submissions while retained. Do not promise preceding selection rollback or pre-return data secrecy on provider failure.
+      Observed external clipboard update and local copy (including legacy OSC52) supersede uncommitted work; keep admitted
+      provider outcome exact and never repeat on reply retry. Main services desktop consequences before clipboard offer
+      and before drawing. No VT platform condition, new read authority, primary MIME, token or positive paste-mode advertisement.
+  selects:
+    kitty.clipboard.native-local-submission: effect
+  reason: Pinned Kitty local commit does not independently acknowledge compositor selection. Installed SDL probe demonstrates
+    registration/clear booleans and local owner event cannot prove cleanup or external selection. User chose provider-local
+    submission guarantee for cross-platform portability. Native callback lifetime and explicit consent remain stronger
+    defensive invariants; isolate platform-specific effects above VT and qualify selected Wayland runtime independently.
+  evidence_basis: Operator selected provider-local DONE guarantee for portable future OS support, 2026-11-27. Pinned Kitty
+    a79f376b85fd95e3dfd0589877123996bacd4184 clipboard.rst SHA256 a39c5000237a51b35bde98b07b0c335547013c9df92c290ab28598500b29afa9;
+    kitty/clipboard.py285-300,480-488, kitty/glfw.c3828-3843, glfw/input.c1575-1593 and glfw/wl_window.c2860-2889 show
+    local commit without external acknowledgement. Installed SDL3.4.20 native private-seat probe receipt 902394710de71637767366b19a25936cbf3fe7b168f92b0d6ee8623c028082a7
+    records false registration with externally readable offer and true return/owner event without external selection.
+    Current Zig adapter fault-injected ownership tests and actual private Wayland application synthetic consent/second-client
+    binary/alias/empty, routed DONE and supersession/EPERM/stale suppression evidence; see workstream wave04d.
+  implementation_policy: targeted
+  implementation_assessment:
+    as_of: '2026-11-27'
+    scope: Selected ordinary SDL Wayland MIME write provider under local submission guarantee
+    intent: target
+    status: PARTIAL
+    owners:
+    - howl-app/src/native_clipboard.zig:Provider
+    - howl-app/src/main.zig:App
+    - howl-app/src/clipboard_broker.zig:Broker
+    tests:
+    - file: howl-app/src/native_clipboard.zig
+      test: native clipboard callback retains moved binary aliases through replacement and cleanup
+      relation: protocol-family
+    - file: howl-app/src/native_clipboard.zig
+      test: native clipboard failed registrations separate retirement from return value
+      relation: protocol-family
+    - file: howl-app/src/native_clipboard.zig
+      test: native clipboard preflight failure leaves old offer and new caller data intact
+      relation: protocol-family
+    - file: howl-app/src/clipboard_broker.zig
+      test: clipboard supersession revokes prepared data without changing focus or replaying a provider
+      relation: protocol-family
+    verified_subset: Real VT prepared binary/alias allocation moved into callback owner, exact pointer and empty/unknown
+      response, ordinary replacement and cleanup. Modeled early/late/uncertain failure and failed clear, revoked access
+      and bounded retention, both own preallocation failures preserve old offer, primary refusal. Prepared supersession
+      abort without focus change, admitted outcome not replayed. Actual private Wayland candidate with real pointer consent,
+      independent binary/alias/empty client reads, exact child DONE then DSR, external selection supersession EPERM, stale
+      continuations inert and newer selection preserved. Exact installed library probe independently qualifies observed
+      cleanup and local-vs-external discrepancy.
+    boundary: Only selected SDL Wayland ordinary MIME write path and local acceptance, not compositor or receiving-client
+      guarantee. Adapter failure variants modeled and installed native public API fault probes measured separately; complete
+      allocator/backend/reentrancy/async callback matrix and physical or alternate compositor/OS behavior not qualified.
+      Failed provider may alter prior selection or expose bytes before failure is observed; subsequent callback access
+      suppressed. At most one ambiguous revoked candidate retained until cleanup or shutdown; prior provider-owned offer
+      and one staging transaction may coexist, not a64MiB whole-process bound. Full64MiB end-to-end wire/desktop, actual
+      host MIME reads/listing, primary, tokens, native C typed APIs and positive paste event detection remain open. Installed
+      daily unchanged.
+    not_full_because: Ordinary write local-provider subset is qualified; actual full clipboard exchange, all provider
+      and permission combinations and paste events remain incomplete.
+  applies_to:
+    clauses:
+    - kitty_clipboard.envelope
+    - kitty_clipboard.write
+    - kitty_clipboard.mime-alias
+    - kitty_clipboard.write-data
+    scope: Portable local submission guarantee and selected SDL ordinary Wayland MIME write provider; no wider host read
+      or paste capability claim.
 pending_reconciliation: []

@@ -20,6 +20,7 @@ const widgets = @import("widgets.zig");
 const tab_title = @import("tab_title.zig");
 const host_status = @import("program_status.zig");
 const clipboard_broker = @import("clipboard_broker.zig");
+const native_clipboard = @import("native_clipboard.zig");
 const status_toast = @import("status_toast.zig");
 const settings = @import("settings.zig");
 const pages = @import("settings_pages.zig");
@@ -187,13 +188,21 @@ const HeaderCache = struct {
         self.* = .{};
     }
 };
-// Main owns this optional provider selection. The normal application does
-// not select one until native clipboard adoption has been qualified.
+// Main owns provider selection and actual clipboard effects. No provider
+// receives a mutable VT. Other host backends can select the same contract.
 const ClipboardHost = struct {
     broker: *clipboard_broker.Broker,
-    // Provider may move the allocation out of data; otherwise the caller
-    // retires it after the synchronous call. Never receives a mutable VT.
-    publish: *const fn (*vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus,
+    provider: union(enum) {
+        native: *native_clipboard.Provider,
+        synthetic: *const fn (*vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus,
+    },
+
+    fn publish(self: ClipboardHost, data: *vt.Terminal.KittyWriteData) vt.Terminal.KittyWriteStatus {
+        return switch (self.provider) {
+            .native => |provider| provider.publish(data),
+            .synthetic => |provider| provider(data),
+        };
+    }
 };
 const ClipboardButtons = struct {
     allow: layout.Rect,
@@ -723,7 +732,7 @@ pub const App = struct {
             .copy_selection => {
                 const bytes = try (try self.pane().requireOwner()).copySelection(allocator, 1024 * 1024);
                 defer allocator.free(bytes);
-                try setClipboard(bytes);
+                try self.copyClipboard(bytes);
             },
         }
     }
@@ -1238,7 +1247,7 @@ pub const App = struct {
         } else if (mods.control and (key == c.SDLK_C or key == c.SDLK_X)) {
             self.keyboard.suppress_text = true;
             if (edit.selected()) |range| {
-                try setClipboard(buffer[range.start..range.end]);
+                try self.copyClipboard(buffer[range.start..range.end]);
                 if (key == c.SDLK_X) {
                     edit.erase(buffer, len, false);
                     return true;
@@ -1497,6 +1506,11 @@ pub const App = struct {
     }
     fn event(self: *App, value: c.SDL_Event) !void {
         switch (value.type) {
+            c.SDL_EVENT_CLIPBOARD_UPDATE => {
+                // Ignore our own publication event; it is not an external
+                // acceptance receipt. No clipboard bytes are read here.
+                if (!value.clipboard.owner) self.clipboardSuperseded();
+            },
             c.SDL_EVENT_WINDOW_FOCUS_LOST,
             c.SDL_EVENT_WINDOW_HIDDEN,
             c.SDL_EVENT_WINDOW_MINIMIZED,
@@ -1843,6 +1857,22 @@ pub const App = struct {
         self.wakeClipboardWorkers();
     }
 
+    // A newer local copy or observed external selection invalidates consent
+    // for an earlier uncommitted write, even if the pane remains focused.
+    fn clipboardSuperseded(self: *App) void {
+        const host = self.clipboard_host orelse return;
+        host.broker.supersede();
+        self.clipboard_input_prompt = null;
+        self.clipboard_displayed = null;
+        self.clipboard_press = null;
+        self.wakeClipboardWorkers();
+    }
+
+    fn copyClipboard(self: *App, bytes: []const u8) !void {
+        self.clipboardSuperseded();
+        try setClipboard(bytes);
+    }
+
     fn syncClipboardFocus(self: *App) void {
         if (self.clipboard_host == null) return;
         const owner: ?u64 = blk: {
@@ -2005,7 +2035,7 @@ pub const App = struct {
         for (self.tabs[0..self.tab_count]) |t| for (t.?.panes) |p| if (p) |value| if (value.owner) |owner| {
             if (try owner.takeClipboardSet(allocator)) |bytes| {
                 defer allocator.free(bytes);
-                try setClipboard(bytes);
+                try self.copyClipboard(bytes);
             }
             if (owner.takeAttention()) attention = true;
         };
@@ -2651,7 +2681,6 @@ pub const App = struct {
     }
 
     fn draw(self: *App) !void {
-        try self.desktopHost();
         var width: c_int = 0;
         var height: c_int = 0;
         if (!c.SDL_GetWindowSize(self.window, &width, &height)) return error.SDL;
@@ -2775,6 +2804,11 @@ pub fn main(initial: std.process.Init) !void {
     defer inherited.block.deinit(allocator);
     var threaded = std.Io.Threaded.init(allocator, .{ .environ = inherited });
     defer threaded.deinit();
+    var clipboard_provider = native_clipboard.Provider.init(allocator);
+    // SDL_Quit must retire callbacks before the provider address disappears.
+    defer clipboard_provider.deinitAfterQuit();
+    var broker = clipboard_broker.Broker.init(threaded.io());
+    defer broker.deinit();
     init.minimal.environ = inherited;
     init.io = threaded.io();
     if (!c.SDL_SetAppMetadata("Howl", version, "io.github.laurenceguws.howl") or !c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDL;
@@ -2813,6 +2847,12 @@ pub fn main(initial: std.process.Init) !void {
         .scale = scale,
         .bindings = try keybindings.Bindings.fromOverrides(configuration.value.keybindings),
         .focused = c.SDL_GetWindowFlags(window) & c.SDL_WINDOW_INPUT_FOCUS != 0,
+        // Select only the currently qualified Wayland provider. Other
+        // operating systems/drivers retain the existing refusal policy.
+        .clipboard_host = if (std.mem.eql(u8, std.mem.span(c.SDL_GetCurrentVideoDriver()), "wayland"))
+            .{ .broker = &broker, .provider = .{ .native = &clipboard_provider } }
+        else
+            null,
     };
     defer app.deinit();
     if (!c.SDL_SetWindowHitTest(window, windowHitTest, &app) or !c.SDL_SetWindowBordered(window, false)) return error.SDL;
@@ -2822,6 +2862,9 @@ pub fn main(initial: std.process.Init) !void {
     try app.createTab(try app.startup(), null);
     var redraw = true;
     while (app.running) {
+        // Process older copied legacy sets before admitting a new offer.
+        // Desktop service must not depend on a rendered frame.
+        try app.desktopHost();
         app.clipboardTurn();
         if (redraw) try app.draw();
         redraw = false;
@@ -4723,7 +4766,7 @@ test "selected clipboard main consent drives a real worker and synthetic provide
         .bindings = try keybindings.Bindings.init(),
         .focused = true,
         .tab_count = 1,
-        .clipboard_host = .{ .broker = &broker, .publish = Synthetic.publish },
+        .clipboard_host = .{ .broker = &broker, .provider = .{ .synthetic = Synthetic.publish } },
     };
     app.init.io = threaded.io();
     app.tabs[0] = &tab_value;
