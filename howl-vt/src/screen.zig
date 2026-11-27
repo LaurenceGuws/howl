@@ -55,6 +55,13 @@ const RowMetadata = struct {
     ordinary: OrdinarySpan = .{},
     background: BackgroundSpan = .{},
 };
+// A bank-local negative proof over the write rendition and live cells.
+// History admission and reflow explicitly reopen it; no cell carries cache data.
+const BlinkPresence = struct {
+    generation: u64 = 0,
+    possible: bool = false,
+    present: bool = false,
+};
 const history_store_mod = @import("history_store.zig");
 const scalar_storage = @import("scalar_storage.zig");
 const sized_text = @import("sized_text.zig");
@@ -313,6 +320,7 @@ pub const Screen = struct {
     // with the retained cell row; observers keep their own prior identities.
     row_metadata: ?[]RowMetadata,
     next_row_generation: u64,
+    blink_presence: BlinkPresence = .{},
     // Conservative fast-path hint. Once nonsemantic multicell state is
     // admitted, boundary cleanup remains enabled for this Screen lifetime.
     nonsemantic_clusters_possible: bool,
@@ -706,6 +714,7 @@ pub const Screen = struct {
         self.scalars = buffers.scalars;
         self.row_flags = buffers.row_flags;
         self.row_metadata = buffers.row_metadata;
+        self.blink_presence = .{ .possible = true };
         self.tab_stops = buffers.tab_stops;
         self.history_store = null;
         self.history_restore_plan = null;
@@ -1323,6 +1332,7 @@ pub const Screen = struct {
         self.unicode_core = false;
         self.unicode_origin = null;
         self.current_attrs = initial_cell_attrs;
+        self.blink_presence = .{};
         if (self.cells) |c| @memset(c, blank_cell);
         if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |buf| @memset(buf, 0);
@@ -1958,6 +1968,7 @@ pub const Screen = struct {
     /// Clears visible cells and marks the complete screen dirty.
     /// Clears the visible grid without discarding retained history.
     pub fn clearVisibleCells(self: *Screen) void {
+        self.blink_presence = .{ .possible = self.current_attrs.blink };
         if (self.cells) |cells| @memset(cells, blank_cell);
         if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |flags| @memset(flags, 0);
@@ -2151,6 +2162,8 @@ pub const Screen = struct {
             Sgr(SgrPatch).apply(&patch, operands);
             if (patch.written == 0) return changed;
         }
+        // Reverse selectors may introduce blink independently of the pen.
+        if (reverse or patch.values.blink) self.blink_presence.possible = true;
 
         // A sized glyph's other rows depend on the lead's ink rendition.
         // Mark each dependent row once, without mutating its cell attributes.
@@ -3661,11 +3674,43 @@ pub const Screen = struct {
         return !std.meta.eql(before, color.*);
     }
 
+    /// Replace the pen after a validated rendition or savepoint restore.
+    pub fn setCurrentAttrs(self: *Screen, attrs: CellAttrs) void {
+        self.current_attrs = attrs;
+        if (attrs.blink) self.blink_presence.possible = true;
+    }
+
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
     pub fn applySgr(self: *Screen, operands: SgrOperands) bool {
         const before = self.current_attrs;
         Sgr(CellAttrs).apply(&self.current_attrs, operands);
+        if (self.current_attrs.blink) self.blink_presence.possible = true;
         return !std.meta.eql(before, self.current_attrs);
+    }
+
+    /// Exact live-grid ink presence, independent of observers and clocks.
+    /// Ordinary writes cannot invalidate a proof that neither their pen nor
+    /// any retained live cell has blink. Concealed/empty blinking cells keep
+    /// the conservative proof open because later edits can expose ink.
+    pub fn hasBlinkingInk(self: *Screen) bool {
+        const proof = &self.blink_presence;
+        if (!proof.possible) return false;
+        if (proof.generation == self.next_row_generation) return proof.present;
+        proof.present = false;
+        proof.possible = self.current_attrs.blink;
+        if (self.cells) |cells| for (cells) |*cell| {
+            if (!cell.attrs.blink) continue;
+            proof.possible = true;
+            if (!cell.attrs.invisible and cell.x == 0 and
+                (cell.codepoint != 0 and cell.codepoint != ' ' and cell.codepoint != 0x10eeee or
+                    cell.combining_len != 0 or (cell.y == 0 and cell.attrs.enclosure != .none)))
+            {
+                proof.present = true;
+                break;
+            }
+        };
+        proof.generation = self.next_row_generation;
+        return proof.present;
     }
 
     // One bounded set of field assignments for a region, plus relative
@@ -4547,6 +4592,7 @@ pub const Screen = struct {
                     self.cells.?[@intCast(destination + col)] = self.historyCellAt(0, col);
                 self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = restored_flags;
                 self.consumeNewestHistoryRow();
+                self.blink_presence.possible = true;
                 result.restored += 1;
                 result.changed = true;
             } else {

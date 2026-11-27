@@ -7136,10 +7136,6 @@ pub const Terminal = struct {
     /// Caller-clocked presentation only; time never mutates canonical cells.
     text_blink_origin_ms: ?u64 = null,
     text_blink_visible: bool = true,
-    text_blink_row_generation: u64 = 0,
-    text_blink_cells_identity: usize = 0,
-    text_blink_alternate: bool = false,
-    text_blink_present: bool = false,
     resize_prepared: bool = false,
     // -------------------------------------------------------------------------
     // Construction and feed
@@ -7700,7 +7696,10 @@ pub const Terminal = struct {
         if (self.sgr_stack_len == 0) return false;
         self.sgr_stack_len -= 1;
         const entry = self.sgr_stack[self.sgr_stack_len];
-        restoreSelectedSgr(&self.screen_state.active().current_attrs, entry);
+        const active = self.screen_state.active();
+        var attrs = active.current_attrs;
+        restoreSelectedSgr(&attrs, entry);
+        active.setCurrentAttrs(attrs);
         return true;
     }
 
@@ -7717,10 +7716,12 @@ pub const Terminal = struct {
         const row = @min(info.row, active.rows - 1);
         const col = @min(info.col, active.lineRightBoundary(row));
         active.cursor.setPositionByClient(row, col);
-        active.current_attrs.reverse = info.reverse;
-        active.current_attrs.blink = info.blink;
-        active.current_attrs.underline = info.underline;
-        active.current_attrs.bold = info.bold;
+        var attrs = attrs_before;
+        attrs.reverse = info.reverse;
+        attrs.blink = info.blink;
+        attrs.underline = info.underline;
+        attrs.bold = info.bold;
+        active.setCurrentAttrs(attrs);
         active.wrap_pending = info.wrap_pending and active.auto_wrap and col == active.lineRightBoundary(row);
         active.origin_mode = info.origin_mode;
         const designation_changed = self.charset.configureCharset(0, info.g0_designation);
@@ -7840,7 +7841,7 @@ pub const Terminal = struct {
         self.modes.reverse_screen_mode = savepoint.reverse_screen_mode;
         active.origin_mode = savepoint.origin_mode;
         active.auto_wrap = savepoint.auto_wrap;
-        active.current_attrs = savepoint.current_attrs;
+        active.setCurrentAttrs(savepoint.current_attrs);
         active.cursor.restoreSavedStyle(savepoint.cursor.style);
         self.screen_state.primary.cursor.visible = savepoint.cursor.visible;
         self.screen_state.alternate.cursor.visible = savepoint.cursor.visible;
@@ -8358,31 +8359,7 @@ pub const Terminal = struct {
             advanceIdentity(&self.semantic_sequence);
             self.content_sequence = self.semantic_sequence;
         }
-        const alternate = self.screen_state.alt_active;
-        const screen = if (alternate) &self.screen_state.alternate else &self.screen_state.primary;
-        // The next-row identity advances on any cell edit, erase or reset;
-        // backing identity also invalidates the cache across a replacement
-        // grid. Idle and cursor-only worker turns therefore do no cell scan.
-        const cells = screen.cells.?;
-        const identity = @intFromPtr(cells.ptr);
-        if (self.text_blink_row_generation != screen.next_row_generation or
-            self.text_blink_cells_identity != identity or self.text_blink_alternate != alternate)
-        {
-            self.text_blink_present = false;
-            for (cells) |cell| {
-                if (cell.attrs.blink and !cell.attrs.invisible and cell.x == 0 and
-                    (cell.codepoint != 0 and cell.codepoint != ' ' and cell.codepoint != 0x10eeee or
-                        cell.combining_len != 0 or (cell.y == 0 and cell.attrs.enclosure != .none)))
-                {
-                    self.text_blink_present = true;
-                    break;
-                }
-            }
-            self.text_blink_row_generation = screen.next_row_generation;
-            self.text_blink_cells_identity = identity;
-            self.text_blink_alternate = alternate;
-        }
-        if (!self.text_blink_present) {
+        if (!self.screen_state.active().hasBlinkingInk()) {
             self.text_blink_origin_ms = null;
             self.text_blink_visible = true;
             return .{ .changed = tick.changed, .next_ms = tick.next_ms };
@@ -9816,6 +9793,109 @@ test "terminal animation service chooses earliest independent image boundary" {
     try std.testing.expect(both_second.generation > before_both_second);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, both_first.pixels);
     try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, both_second.pixels);
+}
+
+// Independent pre-optimization predicate over every live backing cell.
+// This intentionally does not consult Screen's negative proof.
+fn expectBlinkPresence(terminal: *Terminal, expected: bool, now_ms: u64) !void {
+    const screen = terminal.screen_state.active();
+    var found = false;
+    for (screen.cells.?) |cell| {
+        if (cell.attrs.blink and !cell.attrs.invisible and cell.x == 0 and
+            (cell.codepoint != 0 and cell.codepoint != ' ' and cell.codepoint != 0x10eeee or
+                cell.combining_len != 0 or (cell.y == 0 and cell.attrs.enclosure != .none)))
+        {
+            found = true;
+            break;
+        }
+    }
+    try std.testing.expectEqual(expected, found);
+    const semantic = terminal.semanticSequence();
+    const content = terminal.contentSequence();
+    const service = terminal.serviceAnimations(now_ms * std.time.ns_per_ms);
+    try std.testing.expectEqual(found, service.next_ms != null);
+    try std.testing.expectEqual(semantic, terminal.semanticSequence());
+    try std.testing.expectEqual(content, terminal.contentSequence());
+}
+
+test "blink absence proof skips ordinary writes and reopens on pen and region admission" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    const screen = terminal.screen_state.active();
+    for (0..20) |i| {
+        // zig-audit: acknowledge discard
+        // reason: This proof compares the committed cell plane and animation service.
+        _ = try terminal.feed("\x1b[1;1Hplain\x1b[31m!\x1b[0m");
+        try expectBlinkPresence(&terminal, false, @intCast(i));
+        try std.testing.expect(!screen.blink_presence.possible);
+        try std.testing.expectEqual(@as(u64, 0), screen.blink_presence.generation);
+    }
+
+    const cases = [_]struct { wire: []const u8, present: bool }{
+        .{ .wire = "\x1b[1;1H\x1b[5;8mX\x1b[0m", .present = false },
+        .{ .wire = "\x1b[2*x\x1b[1;1;1;1;28$r", .present = true },
+        .{ .wire = "\x1b[1;1;1;1;25$r", .present = false },
+        .{ .wire = "\x1b[1;1;1;1;5$t", .present = true },
+        .{ .wire = "\x1b[1;1;1;1;5$t", .present = false },
+        .{ .wire = "\x1b[1;1H\x1b[5;51m \x1b[0m", .present = true },
+        .{ .wire = "\x1b[2J", .present = false },
+        .{ .wire = "\x1b[1;1H\x1b[5m \x1b[0m", .present = false },
+        .{ .wire = "\x1b[5m\xcc\x81\x1b[0m", .present = true },
+        .{ .wire = "\x1b[2J", .present = false },
+        .{ .wire = "\x1b[1;1H\x1b[5m\x1b]66;s=2;X\x07\x1b[0m", .present = true },
+        .{ .wire = "\x1b[2J", .present = false },
+    };
+    for (cases, 0..) |case, i| {
+        // zig-audit: acknowledge discard
+        // reason: This proof compares the committed cell plane and animation service.
+        _ = try terminal.feed(case.wire);
+        try expectBlinkPresence(&terminal, case.present, 100 + @as(u64, @intCast(i)));
+    }
+    try std.testing.expect(!screen.blink_presence.possible);
+    const last_scan = screen.blink_presence.generation;
+    // zig-audit: acknowledge discard
+    // reason: This proof compares the committed cell plane and animation service.
+    _ = try terminal.feed("\x1b[1;1Hordinary");
+    try expectBlinkPresence(&terminal, false, 200);
+    try std.testing.expectEqual(last_scan, screen.blink_presence.generation);
+}
+
+test "blink proof follows restored pens banks history and replacement grids" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    const cases = [_]struct { wire: []const u8, present: bool }{
+        .{ .wire = "\x1b[5m\x1b[#{\x1b[?1049h\x1b[#}B\x1b[0m", .present = true },
+        .{ .wire = "\x1b[?1049l\x1b[0m", .present = false },
+        .{ .wire = "\x1b[?1049h", .present = false },
+        .{ .wire = "\x1b[?1049l\x1b[0m\x1b[2J", .present = false },
+        .{ .wire = "\x1b[5m\x1b7\x1b[0m\x1b8B\x1b[0m", .present = true },
+        .{ .wire = "\x1b[2J", .present = false },
+        .{ .wire = "\x1bP1$t1;1;1;D;@;@;0;2;O;BBBB\x1b\\B\x1b[0m", .present = true },
+        .{ .wire = "\x1b[3;1H\n", .present = false },
+        .{ .wire = "\x1b[1+T", .present = true },
+        .{ .wire = "\x1b[3;1H\n", .present = false },
+    };
+    for (cases, 0..) |case, i| {
+        // zig-audit: acknowledge discard
+        // reason: This proof compares the committed cell plane and animation service.
+        _ = try terminal.feed(case.wire);
+        try expectBlinkPresence(&terminal, case.present, @intCast(i));
+    }
+    try std.testing.expect(!terminal.screen_state.active().blink_presence.possible);
+    // RIS clears live ink but preserves retained history, which must reopen
+    // the proof when restored. The replacement grid must also revalidate it.
+    terminal.hardReset();
+    try expectBlinkPresence(&terminal, false, 20);
+    // zig-audit: acknowledge discard
+    // reason: This proof compares the committed cell plane and animation service.
+    _ = try terminal.feed("\x1b[1+T");
+    try expectBlinkPresence(&terminal, true, 21);
+    try terminal.resize(4, 8);
+    try expectBlinkPresence(&terminal, true, 22);
+    // zig-audit: acknowledge discard
+    // reason: This proof compares the committed cell plane and animation service.
+    _ = try terminal.feed("\x1b[2J");
+    try expectBlinkPresence(&terminal, false, 23);
 }
 
 test "terminal SGR text blink owns caller-clocked phases without changing content" {
